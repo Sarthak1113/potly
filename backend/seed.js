@@ -25,7 +25,6 @@ const seed = async () => {
     let admin = await User.findOne({ email: 'admin@game.com' });
     if (!admin) {
       console.log('Creating initial admin user (admin@game.com)...');
-      const hashedPassword = await bcrypt.hash('admin123', 10);
       
       const defaultQuestions = [
         { question: "What is your mother's maiden name?", answer: 'potly' },
@@ -42,7 +41,7 @@ const seed = async () => {
       admin = await User.create({
         username: 'admin',
         email: 'admin@game.com',
-        password: hashedPassword,
+        password: 'admin123', // UserSchema pre('save') hashes this with bcrypt
         role: 'admin',
         balance: 10000,
         securityQuestions: hashedQuestions
