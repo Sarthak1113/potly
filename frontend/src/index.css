@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+
+  --color-brand: #6419D6;
+  --color-brand-hover: #4710A8;
+  --color-lavender: #A78BFA;
+  --color-gold: #FFB51B;
+  --color-orange: #FF762B;
+
+  --color-bg: #17102D;
+  --color-surface: #21183A;
+  --color-surface-card: #1E1535;
+  --color-text: #F7F5FC;
+  --color-text-muted: #C4BBD5;
+  --color-border: #3B3152;
+
+  --font-heading: "Outfit", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "Space Grotesk", monospace;
+
+  --radius-card: 18px;
+  --radius-panel: 22px;
+  --radius-control: 12px;
+  --radius-pill: 9999px;
+
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.28);
+  --shadow-overlay: 0 16px 48px rgba(15, 10, 30, 0.5);
+  --focus-ring: 0 0 0 3px rgba(100, 25, 214, 0.35);
+}
+
+@layer base {
+  body {
+    @apply bg-surface-midnight text-potly-text font-sans antialiased min-h-screen selection:bg-brand-purple selection:text-white;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading tracking-tight;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-brand-purple hover:bg-brand-purple-dark text-white font-semibold py-2.5 px-4 rounded-control transition-all duration-200 shadow-md shadow-brand-purple/25 hover:shadow-brand active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-brand-purple disabled:active:scale-100;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-elevated hover:bg-[#2C214C] text-potly-text border border-potly-border font-semibold py-2.5 px-4 rounded-control transition-all duration-200 active:scale-[0.98];
+  }
+
+  .btn-gold {
+    @apply bg-brand-gold hover:bg-[#E59F12] text-[#211A32] font-bold py-2.5 px-4 rounded-control transition-all duration-200 shadow-md shadow-brand-gold/30 hover:shadow-gold active:scale-[0.98];
+  }
+
+  .btn-orange {
+    @apply bg-brand-orange hover:bg-[#E66219] text-white font-semibold py-2.5 px-4 rounded-control transition-all duration-200 shadow-md shadow-brand-orange/30 hover:shadow-orange active:scale-[0.98];
+  }
+
+  .input-field {
+    @apply bg-[#130C26] border border-potly-border text-white rounded-control px-3.5 sm:px-4 py-2.5 sm:py-2.5 text-base sm:text-sm w-full focus:outline-none focus:ring-2 focus:ring-brand-purple focus:border-transparent placeholder-[#6E687A] transition-all;
+  }
+
+  .card {
+    @apply bg-surface-elevated border border-potly-border rounded-card p-4 sm:p-6 shadow-card;
+  }
+
+  .card-midnight {
+    @apply bg-surface-card border border-potly-border rounded-card p-4 sm:p-6 shadow-card;
+  }
+
+  .card-interactive {
+    @apply bg-surface-elevated border border-potly-border hover:border-brand-purple/50 rounded-card p-4 sm:p-6 shadow-card transition-all duration-200 hover:shadow-elevated;
+  }
+
+  .badge-gold {
+    @apply bg-brand-gold/15 text-brand-gold border border-brand-gold/30 rounded-pill px-2.5 py-0.5 text-xs font-semibold font-mono;
+  }
+
+  .badge-purple {
+    @apply bg-brand-purple/20 text-brand-lavender border border-brand-purple/40 rounded-pill px-2.5 py-0.5 text-xs font-semibold;
+  }
+
+  .badge-orange {
+    @apply bg-brand-orange/15 text-brand-orange border border-brand-orange/30 rounded-pill px-2.5 py-0.5 text-xs font-semibold;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
