@@ -164,12 +164,24 @@ router.post('/', protect, adminOnly, async (req, res) => {
       minUsers: finalMinUsers,
       rules: finalRules,
       status: 'open',
+      participants: [],
       createdBy: req.user.id
     });
 
-    try { getIO().emit('room:created', { room }); } catch (e) {}
+    const populatedRoom = await Room.findById(room._id)
+      .populate('createdBy', 'username')
+      .populate('winner', 'username');
 
-    res.status(201).json({ success: true, room });
+    const cleanRoom = populatedRoom ? populatedRoom.toObject() : room.toObject();
+    cleanRoom.participants = cleanRoom.participants || [];
+    cleanRoom.participantsCount = 0;
+
+    try {
+      getIO().emit('room:created', cleanRoom);
+      getIO().emit('room:created', { room: cleanRoom });
+    } catch (e) {}
+
+    res.status(201).json({ success: true, room: cleanRoom });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
@@ -228,7 +240,36 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
       await room.populate('winner', 'username');
     }
 
-    try { getIO().emit('room:status_changed', { roomId: room.roomId, id: room._id, status: room.status }); } catch (e) {}
+    const winnerData = room.winner
+      ? {
+          _id: room.winner._id,
+          id: room.winner._id,
+          username: room.winner.username
+        }
+      : null;
+
+    const statusPayload = {
+      roomId: room.roomId,
+      id: room._id,
+      status: room.status,
+      winner: winnerData,
+      prize: room.prize,
+      title: room.title,
+      roomTitle: room.title,
+      endedAt: room.endedAt || (status === 'completed' ? new Date() : null),
+      participantsCount: room.participants ? room.participants.length : 0
+    };
+
+    try {
+      getIO().emit('room:status_changed', statusPayload);
+      getIO().emit('room:status', statusPayload);
+      if (status === 'completed') {
+        getIO().emit('room:completed', statusPayload);
+        getIO().emit('room:winner_drawn', statusPayload);
+      } else if (status === 'cancelled') {
+        getIO().emit('room:cancelled', statusPayload);
+      }
+    } catch (e) {}
 
     res.json({
       success: true,
@@ -308,6 +349,10 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
     if (!room) {
       return res.status(404).json({ success: false, message: 'Room not found' });
     }
+
+    try {
+      getIO().emit('room:deleted', { id: room._id, roomId: room.roomId });
+    } catch (e) {}
 
     res.json({ success: true, message: 'Room deleted' });
   } catch (error) {

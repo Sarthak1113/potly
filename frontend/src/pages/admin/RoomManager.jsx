@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
+import socket from '../../services/socket';
 import toast from 'react-hot-toast';
 import {
   Gamepad2,
@@ -189,6 +190,166 @@ export default function RoomManager() {
   useEffect(() => {
     fetchRooms(page);
   }, [fetchRooms, page]);
+
+  // Real-time Socket.IO event listeners for live updates without page refresh
+  useEffect(() => {
+    // 1. Room created
+    const handleRoomCreated = (payload) => {
+      if (!payload) return;
+      const rawRoom = payload.room || payload;
+      if (!rawRoom || !rawRoom._id) return;
+      const cleanRoom = {
+        ...rawRoom,
+        participants: Array.isArray(rawRoom.participants) ? rawRoom.participants : [],
+        participantsCount: Array.isArray(rawRoom.participants)
+          ? rawRoom.participants.length
+          : (Number(rawRoom.participantsCount) || 0)
+      };
+
+      setRooms((prev) => {
+        const exists = prev.some(
+          (r) =>
+            String(r._id) === String(cleanRoom._id) ||
+            (r.roomId && r.roomId === cleanRoom.roomId)
+        );
+        if (exists) {
+          return prev.map((r) =>
+            String(r._id) === String(cleanRoom._id) || (r.roomId && r.roomId === cleanRoom.roomId)
+              ? cleanRoom
+              : r
+          );
+        }
+        return [cleanRoom, ...prev];
+      });
+      setPagination((prev) => ({ ...prev, total: (prev.total || 0) + 1 }));
+    };
+
+    // 2. Room user joined
+    const handleUserJoined = (payload) => {
+      if (!payload) return;
+      const { roomId, id, participantsCount, newParticipant } = payload;
+
+      setRooms((prevRooms) =>
+        prevRooms.map((room) => {
+          const match =
+            (id && String(room._id) === String(id)) ||
+            (roomId && (room.roomId === roomId || String(room._id) === String(roomId)));
+          if (!match) return room;
+
+          let updatedParticipants = Array.isArray(room.participants) ? [...room.participants] : [];
+          if (newParticipant) {
+            const alreadyHas = updatedParticipants.some(
+              (p) =>
+                (p.userId && String(p.userId) === String(newParticipant.userId)) ||
+                (p.userId?._id && String(p.userId._id) === String(newParticipant.userId)) ||
+                (p.username && p.username === newParticipant.username)
+            );
+            if (!alreadyHas) {
+              updatedParticipants.push(newParticipant);
+            }
+          }
+
+          return {
+            ...room,
+            participantsCount: typeof participantsCount === 'number' ? participantsCount : updatedParticipants.length,
+            participants: updatedParticipants
+          };
+        })
+      );
+
+      // Also update selectedRoom if details modal is open
+      setSelectedRoom((prev) => {
+        if (!prev) return prev;
+        const match =
+          (id && String(prev._id) === String(id)) ||
+          (roomId && (prev.roomId === roomId || String(prev._id) === String(roomId)));
+        if (!match) return prev;
+
+        let updatedParticipants = Array.isArray(prev.participants) ? [...prev.participants] : [];
+        if (newParticipant) {
+          const alreadyHas = updatedParticipants.some(
+            (p) =>
+              (p.userId && String(p.userId) === String(newParticipant.userId)) ||
+              (p.userId?._id && String(p.userId._id) === String(newParticipant.userId)) ||
+              (p.username && p.username === newParticipant.username)
+          );
+          if (!alreadyHas) {
+            updatedParticipants.push(newParticipant);
+          }
+        }
+
+        return {
+          ...prev,
+          participantsCount: typeof participantsCount === 'number' ? participantsCount : updatedParticipants.length,
+          participants: updatedParticipants
+        };
+      });
+    };
+
+    // 3. Status changed / completed / winner drawn
+    const handleStatusUpdate = (payload) => {
+      if (!payload) return;
+      const { roomId, id, status, winner, prize, reason, notes } = payload;
+
+      setRooms((prevRooms) =>
+        prevRooms.map((room) => {
+          const match =
+            (id && String(room._id) === String(id)) ||
+            (roomId && (room.roomId === roomId || String(room._id) === String(roomId)));
+          if (!match) return room;
+          return {
+            ...room,
+            status: status || room.status,
+            ...(winner ? { winner } : {}),
+            ...(prize !== undefined ? { prize } : {}),
+            ...(reason || notes ? { notes: reason || notes } : {})
+          };
+        })
+      );
+
+      setSelectedRoom((prev) => {
+        if (!prev) return prev;
+        const match =
+          (id && String(prev._id) === String(id)) ||
+          (roomId && (prev.roomId === roomId || String(prev._id) === String(roomId)));
+        if (!match) return prev;
+        return {
+          ...prev,
+          status: status || prev.status,
+          ...(winner ? { winner } : {}),
+          ...(prize !== undefined ? { prize } : {}),
+          ...(reason || notes ? { notes: reason || notes } : {})
+        };
+      });
+    };
+
+    // 4. Room deleted
+    const handleRoomDeleted = (payload) => {
+      if (!payload) return;
+      const { id, roomId } = payload;
+      setRooms((prev) => prev.filter((r) => String(r._id) !== String(id) && r.roomId !== roomId));
+    };
+
+    socket.on('room:created', handleRoomCreated);
+    socket.on('room:user_joined', handleUserJoined);
+    socket.on('room:status', handleStatusUpdate);
+    socket.on('room:status_changed', handleStatusUpdate);
+    socket.on('room:completed', handleStatusUpdate);
+    socket.on('room:winner_drawn', handleStatusUpdate);
+    socket.on('room:cancelled', handleStatusUpdate);
+    socket.on('room:deleted', handleRoomDeleted);
+
+    return () => {
+      socket.off('room:created', handleRoomCreated);
+      socket.off('room:user_joined', handleUserJoined);
+      socket.off('room:status', handleStatusUpdate);
+      socket.off('room:status_changed', handleStatusUpdate);
+      socket.off('room:completed', handleStatusUpdate);
+      socket.off('room:winner_drawn', handleStatusUpdate);
+      socket.off('room:cancelled', handleStatusUpdate);
+      socket.off('room:deleted', handleRoomDeleted);
+    };
+  }, []);
 
   // Open Room Details
   const handleViewDetails = async (room) => {
@@ -616,10 +777,15 @@ export default function RoomManager() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {rooms.map((room) => {
             const countdown = getCountdownDisplay(room.startTime);
-            const participantCount = room.participants?.length || 0;
+            const participantCount = Array.isArray(room.participants)
+              ? room.participants.length
+              : (typeof room.participantsCount === 'number' ? room.participantsCount : 0);
             const maxUsers = room.maxUsers;
             const isFull = maxUsers && participantCount >= maxUsers;
-            const winnerUser = room.winner && typeof room.winner === 'object' ? room.winner : null;
+            const winnerName =
+              typeof room.winner === 'object'
+                ? room.winner?.username
+                : (typeof room.winner === 'string' && room.winner ? room.winner : null);
 
             return (
               <div
@@ -703,7 +869,7 @@ export default function RoomManager() {
                         <Trophy size={14} className="text-amber-400" /> Winner:
                       </span>
                       <span className="font-bold text-white">
-                        {winnerUser?.username || 'Winner Drawn'}
+                        @{winnerName || 'Winner Drawn'}
                       </span>
                     </div>
                   )}

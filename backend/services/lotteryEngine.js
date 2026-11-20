@@ -21,12 +21,16 @@ const processRoom = async (room) => {
     room.status = 'in_progress';
     await room.save();
 
-    safeEmit('room:status_changed', {
+    const inProgressPayload = {
       roomId: room.roomId,
       id: room._id,
       status: 'in_progress',
-      title: room.title
-    });
+      title: room.title,
+      roomTitle: room.title
+    };
+
+    safeEmit('room:status_changed', inProgressPayload);
+    safeEmit('room:status', inProgressPayload);
 
     // 2. RNG Draw & Resolution (with a brief 2-second suspense delay)
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -76,12 +80,17 @@ const processRoom = async (room) => {
 
       await freshRoom.save();
 
-      safeEmit('room:status_changed', {
+      const cancelPayload = {
         roomId: freshRoom.roomId,
         id: freshRoom._id,
         status: 'cancelled',
+        notes: freshRoom.notes,
         reason: `Did not reach minimum ${minRequired} players. All entry fees automatically refunded.`
-      });
+      };
+
+      safeEmit('room:status_changed', cancelPayload);
+      safeEmit('room:status', cancelPayload);
+      safeEmit('room:cancelled', cancelPayload);
       return;
     }
 
@@ -118,24 +127,30 @@ const processRoom = async (room) => {
     freshRoom.endedAt = new Date();
     await freshRoom.save();
 
-    // Broadcast via Socket.IO
-    safeEmit('room:winner_drawn', {
+    const winnerData = {
+      id: winnerUser._id,
+      _id: winnerUser._id,
+      username: winningParticipant.username || winnerUser.username,
+      email: winnerUser.email
+    };
+
+    const winnerPayload = {
       roomId: freshRoom.roomId,
       id: freshRoom._id,
       title: freshRoom.title,
+      roomTitle: freshRoom.title,
       prize: freshRoom.prize,
-      winner: {
-        id: winnerUser._id,
-        username: winningParticipant.username
-      },
-      participantsCount: freshRoom.participants.length
-    });
+      winner: winnerData,
+      status: 'completed',
+      participantsCount: freshRoom.participants.length,
+      endedAt: freshRoom.endedAt
+    };
 
-    safeEmit('room:status_changed', {
-      roomId: freshRoom.roomId,
-      id: freshRoom._id,
-      status: 'completed'
-    });
+    // Broadcast via Socket.IO - emit all event name variants for full compatibility
+    safeEmit('room:winner_drawn', winnerPayload);
+    safeEmit('room:completed', winnerPayload);
+    safeEmit('room:status_changed', winnerPayload);
+    safeEmit('room:status', winnerPayload);
 
     safeEmit('wallet:update', {
       userId: winnerUser._id.toString(),

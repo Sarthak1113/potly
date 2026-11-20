@@ -110,13 +110,13 @@ export default function Lobby() {
             (roomId && (room.roomId === roomId || String(room._id) === String(roomId)));
           if (!match) return room;
 
-          let updatedParticipants = room.participants ? [...room.participants] : [];
+          let updatedParticipants = Array.isArray(room.participants) ? [...room.participants] : [];
           if (newParticipant) {
             const alreadyHas = updatedParticipants.some(
               (p) =>
                 (p.userId && String(p.userId) === String(newParticipant.userId)) ||
                 (p.userId?._id && String(p.userId._id) === String(newParticipant.userId)) ||
-                p.username === newParticipant.username
+                (p.username && p.username === newParticipant.username)
             );
             if (!alreadyHas) {
               updatedParticipants.push(newParticipant);
@@ -125,7 +125,7 @@ export default function Lobby() {
 
           return {
             ...room,
-            participantsCount: participantsCount ?? updatedParticipants.length,
+            participantsCount: typeof participantsCount === 'number' ? participantsCount : updatedParticipants.length,
             participants: updatedParticipants
           };
         })
@@ -135,22 +135,34 @@ export default function Lobby() {
     // 2. Room status change listener (lockdown -> in_progress, etc.)
     const handleRoomStatus = (payload) => {
       if (!payload) return;
-      const { roomId, id, status } = payload;
+      const { roomId, id, status, winner, prize, title, roomTitle, reason, notes, endedAt } = payload;
       setRooms((prevRooms) =>
         prevRooms.map((room) => {
           const match =
             (id && String(room._id) === String(id)) ||
             (roomId && (room.roomId === roomId || String(room._id) === String(roomId)));
           if (!match) return room;
-          return { ...room, status };
+          return {
+            ...room,
+            status: status || room.status,
+            ...(winner ? { winner } : {}),
+            ...(prize !== undefined ? { prize } : {}),
+            ...(reason || notes ? { notes: reason || notes } : {}),
+            ...(endedAt ? { endedAt } : status === 'completed' ? { endedAt: new Date().toISOString() } : {})
+          };
         })
       );
+
+      if (status === 'completed' && winner) {
+        handleRoomCompleted(payload);
+      }
     };
 
     // 3. Room completed & winner resolution listener
     const handleRoomCompleted = (payload) => {
       if (!payload) return;
-      const { roomId, id, winner, prize, roomTitle } = payload;
+      const { roomId, id, winner, prize, roomTitle, title, endedAt } = payload;
+      const effectiveTitle = roomTitle || title;
 
       setRooms((prevRooms) =>
         prevRooms.map((room) => {
@@ -161,8 +173,9 @@ export default function Lobby() {
           return {
             ...room,
             status: 'completed',
-            winner,
-            prize: prize ?? room.prize
+            winner: winner || room.winner,
+            prize: prize ?? room.prize,
+            endedAt: endedAt || room.endedAt || new Date().toISOString()
           };
         })
       );
@@ -171,69 +184,108 @@ export default function Lobby() {
       const winnerId = winner?._id || winner?.id || (typeof winner === 'string' ? winner : null);
       const isMe =
         (currentUserId && String(winnerId) === String(currentUserId)) ||
-        (user?.username && winner?.username === user.username);
+        (user?.username && (winner?.username === user.username || (typeof winner === 'string' && winner === user.username)));
 
       if (isMe) {
         fireConfetti();
         setWinnerCelebration({
-          title: roomTitle || 'Game Room',
+          title: effectiveTitle || 'Game Room',
           prize: prize || 0,
           winner
         });
-        toast.success(`🎉 JACKPOT! You won ₹${Number(prize || 0).toFixed(2)} in ${roomTitle || 'Room'}!`, {
+        toast.success(`🎉 JACKPOT! You won ₹${Number(prize || 0).toFixed(2)} in ${effectiveTitle || 'Room'}!`, {
           duration: 6000
         });
       }
     };
 
     // 4. Room created or updated by admin listener
-    const handleRoomCreated = (newRoom) => {
-      if (!newRoom) return;
+    const handleRoomCreated = (payload) => {
+      if (!payload) return;
+      const rawRoom = payload.room || payload;
+      if (!rawRoom || !rawRoom._id) return;
+      const cleanRoom = {
+        ...rawRoom,
+        participants: Array.isArray(rawRoom.participants) ? rawRoom.participants : [],
+        participantsCount: Array.isArray(rawRoom.participants)
+          ? rawRoom.participants.length
+          : (Number(rawRoom.participantsCount) || 0)
+      };
+
       setRooms((prev) => {
-        const exists = prev.some((r) => String(r._id) === String(newRoom._id));
+        const exists = prev.some(
+          (r) =>
+            String(r._id) === String(cleanRoom._id) ||
+            (r.roomId && r.roomId === cleanRoom.roomId)
+        );
         if (exists) {
-          return prev.map((r) => (String(r._id) === String(newRoom._id) ? newRoom : r));
+          return prev.map((r) =>
+            String(r._id) === String(cleanRoom._id) || (r.roomId && r.roomId === cleanRoom.roomId)
+              ? cleanRoom
+              : r
+          );
         }
-        return [newRoom, ...prev];
+        return [cleanRoom, ...prev];
       });
     };
 
-    const handleRoomUpdated = (updatedRoom) => {
-      if (!updatedRoom) return;
+    const handleRoomUpdated = (payload) => {
+      if (!payload) return;
+      const updatedRoom = payload.room || payload;
+      if (!updatedRoom || !updatedRoom._id) return;
       setRooms((prev) =>
-        prev.map((r) => (String(r._id) === String(updatedRoom._id) ? updatedRoom : r))
+        prev.map((r) =>
+          String(r._id) === String(updatedRoom._id) || (r.roomId && r.roomId === updatedRoom.roomId)
+            ? { ...r, ...updatedRoom }
+            : r
+        )
       );
     };
 
     // 5. Room cancelled / auto-refund listener
     const handleRoomCancelled = (payload) => {
       if (!payload) return;
-      const { roomId, id, reason } = payload;
+      const { roomId, id, reason, notes } = payload;
       setRooms((prevRooms) =>
         prevRooms.map((room) => {
           const match =
             (id && String(room._id) === String(id)) ||
             (roomId && (room.roomId === roomId || String(room._id) === String(roomId)));
           if (!match) return room;
-          return { ...room, status: 'cancelled', notes: reason || room.notes };
+          return { ...room, status: 'cancelled', notes: reason || notes || room.notes };
         })
+      );
+    };
+
+    // 6. Room deleted listener
+    const handleRoomDeleted = (payload) => {
+      if (!payload) return;
+      const { id, roomId } = payload;
+      setRooms((prev) =>
+        prev.filter((r) => String(r._id) !== String(id) && r.roomId !== roomId)
       );
     };
 
     socket.on('room:user_joined', handleUserJoined);
     socket.on('room:status', handleRoomStatus);
+    socket.on('room:status_changed', handleRoomStatus);
     socket.on('room:completed', handleRoomCompleted);
+    socket.on('room:winner_drawn', handleRoomCompleted);
     socket.on('room:created', handleRoomCreated);
     socket.on('room:updated', handleRoomUpdated);
     socket.on('room:cancelled', handleRoomCancelled);
+    socket.on('room:deleted', handleRoomDeleted);
 
     return () => {
       socket.off('room:user_joined', handleUserJoined);
       socket.off('room:status', handleRoomStatus);
+      socket.off('room:status_changed', handleRoomStatus);
       socket.off('room:completed', handleRoomCompleted);
+      socket.off('room:winner_drawn', handleRoomCompleted);
       socket.off('room:created', handleRoomCreated);
       socket.off('room:updated', handleRoomUpdated);
       socket.off('room:cancelled', handleRoomCancelled);
+      socket.off('room:deleted', handleRoomDeleted);
     };
   }, [currentUserId, user?.username, fireConfetti]);
 
@@ -344,12 +396,18 @@ export default function Lobby() {
   // Tab filtering
   const filteredRooms = useMemo(() => {
     return rooms.filter((r) => {
-      if (activeTab === 'open') return r.status === 'open';
+      if (activeTab === 'open') {
+        if (r.status === 'open') return true;
+        if (r.status === 'in_progress') return true;
+        // Keep completed room visible for 45s so users watching the draw see the winner appear without vanishing abruptly
+        if (r.status === 'completed' && r.endedAt && now - new Date(r.endedAt).getTime() < 45000) return true;
+        return false;
+      }
       if (activeTab === 'in_progress') return r.status === 'in_progress';
       if (activeTab === 'completed') return r.status === 'completed';
       return true;
     });
-  }, [rooms, activeTab]);
+  }, [rooms, activeTab, now]);
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8 space-y-6 sm:space-y-8">
@@ -685,7 +743,9 @@ export default function Lobby() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {filteredRooms.map((room) => {
             const countdown = getCountdown(room.startTime, room.status);
-            const participantCount = room.participants?.length ?? (room.participantsCount ?? 0);
+            const participantCount = Array.isArray(room.participants)
+              ? room.participants.length
+              : (typeof room.participantsCount === 'number' ? room.participantsCount : 0);
             const maxUsers = room.maxUsers;
             const isFull = maxUsers ? participantCount >= maxUsers : false;
             const progressPercent = maxUsers
@@ -706,10 +766,10 @@ export default function Lobby() {
             const hasEnoughBalance = userBalance >= entryFee;
             const isJoiningThis = joiningId === (room._id || room.roomId);
 
-            const winnerUser =
-              room.winner && typeof room.winner === 'object'
-                ? room.winner
-                : null;
+            const winnerName =
+              typeof room.winner === 'object'
+                ? room.winner?.username
+                : (typeof room.winner === 'string' && room.winner ? room.winner : null);
 
             return (
               <div
@@ -823,8 +883,12 @@ export default function Lobby() {
                         )
                       ) : room.status === 'in_progress' ? (
                         <span className="text-[#FF762B] animate-pulse">Drawing in progress...</span>
+                      ) : room.status === 'completed' ? (
+                        <span className="text-[#FFB51B] flex items-center gap-1 font-mono">
+                          <Trophy size={13} className="text-[#FFB51B]" /> Draw Finalized
+                        </span>
                       ) : (
-                        <span className="text-[#C4BBD5]">Draw Finalized</span>
+                        <span className="text-rose-400">Cancelled &amp; Refunded</span>
                       )}
                     </div>
                   </div>
@@ -866,7 +930,7 @@ export default function Lobby() {
                         <Trophy size={14} className="text-[#FFB51B]" /> Winner:
                       </span>
                       <span className="font-bold text-[#FFB51B] font-mono bg-[#17102D] px-2.5 py-0.5 rounded-pill border border-[#FFB51B]/30">
-                        @{winnerUser?.username || 'Winner Drawn'}
+                        @{winnerName || 'Winner Drawn'}
                       </span>
                     </div>
                   )}
@@ -900,8 +964,12 @@ export default function Lobby() {
                       {room.status === 'in_progress' ? (
                         <>
                           <Loader2 size={14} className="animate-spin text-[#FF762B]" />
-                          <span>Draw In Progress</span>
+                          <span>Draw In Progress...</span>
                         </>
+                      ) : room.status === 'completed' ? (
+                        <span className="flex items-center gap-1.5 text-[#FFB51B] font-mono">
+                          <Trophy size={14} className="text-[#FFB51B]" /> Completed • Winner: @{winnerName || 'Winner Drawn'}
+                        </span>
                       ) : (
                         <span>Closed</span>
                       )}
