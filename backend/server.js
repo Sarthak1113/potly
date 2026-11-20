@@ -33,7 +33,12 @@ const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     const allowed = getAllowedOrigins();
-    if (allowed.includes(origin) || origin.endsWith('.netlify.app')) {
+    if (
+      allowed.includes(origin) ||
+      origin.endsWith('.netlify.app') ||
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.onrender.com')
+    ) {
       return callback(null, true);
     }
     return callback(new Error(`Origin ${origin} not allowed by CORS`));

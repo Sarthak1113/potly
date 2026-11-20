@@ -7,7 +7,9 @@ const getSocketURL = () => {
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '');
   }
-  return 'http://localhost:5000';
+  return import.meta.env.PROD
+    ? 'https://potly-backend-lyhf.onrender.com'
+    : 'http://localhost:5000';
 };
 
 const SOCKET_URL = getSocketURL();
