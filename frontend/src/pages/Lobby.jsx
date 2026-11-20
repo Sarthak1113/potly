@@ -112,20 +112,27 @@ export default function Lobby() {
 
           let updatedParticipants = Array.isArray(room.participants) ? [...room.participants] : [];
           if (newParticipant) {
-            const alreadyHas = updatedParticipants.some(
-              (p) =>
-                (p.userId && String(p.userId) === String(newParticipant.userId)) ||
-                (p.userId?._id && String(p.userId._id) === String(newParticipant.userId)) ||
-                (p.username && p.username === newParticipant.username)
-            );
+            const newUid = String(newParticipant.userId?._id || newParticipant.userId || '');
+            const newUname = newParticipant.username ? String(newParticipant.username).toLowerCase() : '';
+
+            const alreadyHas = updatedParticipants.some((p) => {
+              const pUid = String(p.userId?._id || p.userId || p._id || '');
+              const pUname = p.username ? String(p.username).toLowerCase() : '';
+              return (newUid && pUid && pUid === newUid) || (newUname && pUname && pUname === newUname);
+            });
+
             if (!alreadyHas) {
               updatedParticipants.push(newParticipant);
             }
           }
 
+          const finalCount = typeof participantsCount === 'number'
+            ? participantsCount
+            : updatedParticipants.length;
+
           return {
             ...room,
-            participantsCount: typeof participantsCount === 'number' ? participantsCount : updatedParticipants.length,
+            participantsCount: finalCount,
             participants: updatedParticipants
           };
         })
@@ -204,12 +211,13 @@ export default function Lobby() {
       if (!payload) return;
       const rawRoom = payload.room || payload;
       if (!rawRoom || !rawRoom._id) return;
+      const rawParticipants = Array.isArray(rawRoom.participants) ? rawRoom.participants : [];
       const cleanRoom = {
         ...rawRoom,
-        participants: Array.isArray(rawRoom.participants) ? rawRoom.participants : [],
-        participantsCount: Array.isArray(rawRoom.participants)
-          ? rawRoom.participants.length
-          : (Number(rawRoom.participantsCount) || 0)
+        participants: rawParticipants,
+        participantsCount: typeof rawRoom.participantsCount === 'number'
+          ? rawRoom.participantsCount
+          : rawParticipants.length
       };
 
       setRooms((prev) => {
@@ -316,25 +324,53 @@ export default function Lobby() {
         updateBalance(userBalance - entryFee);
       }
 
-      // Optimistically mark as joined locally
-      setRooms((prevRooms) =>
-        prevRooms.map((r) => {
-          if (String(r._id) === String(room._id)) {
-            const currentParticipants = r.participants ? [...r.participants] : [];
-            currentParticipants.push({
-              userId: currentUserId,
-              username: user.username,
-              joinedAt: new Date().toISOString()
-            });
-            return {
-              ...r,
-              participants: currentParticipants,
-              participantsCount: currentParticipants.length
-            };
-          }
-          return r;
-        })
-      );
+      // Update room directly from server response (prevents double-counting or desync with socket)
+      if (data?.room) {
+        const fresh = data.room;
+        const freshParticipants = Array.isArray(fresh.participants) ? fresh.participants : [];
+        setRooms((prevRooms) =>
+          prevRooms.map((r) => {
+            if (String(r._id) === String(fresh._id) || (r.roomId && r.roomId === fresh.roomId)) {
+              return {
+                ...r,
+                ...fresh,
+                participants: freshParticipants,
+                participantsCount: typeof fresh.participantsCount === 'number'
+                  ? fresh.participantsCount
+                  : freshParticipants.length
+              };
+            }
+            return r;
+          })
+        );
+      } else {
+        // Fallback optimistic update with deduplication
+        setRooms((prevRooms) =>
+          prevRooms.map((r) => {
+            if (String(r._id) === String(room._id)) {
+              const currentParticipants = Array.isArray(r.participants) ? [...r.participants] : [];
+              const alreadyHas = currentParticipants.some(
+                (p) =>
+                  (p.userId && String(p.userId) === String(currentUserId)) ||
+                  (p.username && p.username === user.username)
+              );
+              if (!alreadyHas) {
+                currentParticipants.push({
+                  userId: currentUserId,
+                  username: user.username,
+                  joinedAt: new Date().toISOString()
+                });
+              }
+              return {
+                ...r,
+                participants: currentParticipants,
+                participantsCount: currentParticipants.length
+              };
+            }
+            return r;
+          })
+        );
+      }
     } catch (err) {
       const errMsg = err.response?.data?.message || 'Failed to join room';
       toast.error(errMsg);
@@ -743,9 +779,9 @@ export default function Lobby() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {filteredRooms.map((room) => {
             const countdown = getCountdown(room.startTime, room.status);
-            const participantCount = Array.isArray(room.participants)
-              ? room.participants.length
-              : (typeof room.participantsCount === 'number' ? room.participantsCount : 0);
+            const participantCount = typeof room.participantsCount === 'number'
+              ? room.participantsCount
+              : (Array.isArray(room.participants) ? room.participants.length : 0);
             const maxUsers = room.maxUsers;
             const isFull = maxUsers ? participantCount >= maxUsers : false;
             const progressPercent = maxUsers

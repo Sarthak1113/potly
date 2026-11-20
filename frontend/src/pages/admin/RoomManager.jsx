@@ -198,12 +198,13 @@ export default function RoomManager() {
       if (!payload) return;
       const rawRoom = payload.room || payload;
       if (!rawRoom || !rawRoom._id) return;
+      const rawParticipants = Array.isArray(rawRoom.participants) ? rawRoom.participants : [];
       const cleanRoom = {
         ...rawRoom,
-        participants: Array.isArray(rawRoom.participants) ? rawRoom.participants : [],
-        participantsCount: Array.isArray(rawRoom.participants)
-          ? rawRoom.participants.length
-          : (Number(rawRoom.participantsCount) || 0)
+        participants: rawParticipants,
+        participantsCount: typeof rawRoom.participantsCount === 'number'
+          ? rawRoom.participantsCount
+          : rawParticipants.length
       };
 
       setRooms((prev) => {
@@ -229,6 +230,25 @@ export default function RoomManager() {
       if (!payload) return;
       const { roomId, id, participantsCount, newParticipant } = payload;
 
+      const updateParticipantList = (prevParticipants) => {
+        let updated = Array.isArray(prevParticipants) ? [...prevParticipants] : [];
+        if (newParticipant) {
+          const newUid = String(newParticipant.userId?._id || newParticipant.userId || '');
+          const newUname = newParticipant.username ? String(newParticipant.username).toLowerCase() : '';
+
+          const alreadyHas = updated.some((p) => {
+            const pUid = String(p.userId?._id || p.userId || p._id || '');
+            const pUname = p.username ? String(p.username).toLowerCase() : '';
+            return (newUid && pUid && pUid === newUid) || (newUname && pUname && pUname === newUname);
+          });
+
+          if (!alreadyHas) {
+            updated.push(newParticipant);
+          }
+        }
+        return updated;
+      };
+
       setRooms((prevRooms) =>
         prevRooms.map((room) => {
           const match =
@@ -236,22 +256,14 @@ export default function RoomManager() {
             (roomId && (room.roomId === roomId || String(room._id) === String(roomId)));
           if (!match) return room;
 
-          let updatedParticipants = Array.isArray(room.participants) ? [...room.participants] : [];
-          if (newParticipant) {
-            const alreadyHas = updatedParticipants.some(
-              (p) =>
-                (p.userId && String(p.userId) === String(newParticipant.userId)) ||
-                (p.userId?._id && String(p.userId._id) === String(newParticipant.userId)) ||
-                (p.username && p.username === newParticipant.username)
-            );
-            if (!alreadyHas) {
-              updatedParticipants.push(newParticipant);
-            }
-          }
+          const updatedParticipants = updateParticipantList(room.participants);
+          const finalCount = typeof participantsCount === 'number'
+            ? participantsCount
+            : updatedParticipants.length;
 
           return {
             ...room,
-            participantsCount: typeof participantsCount === 'number' ? participantsCount : updatedParticipants.length,
+            participantsCount: finalCount,
             participants: updatedParticipants
           };
         })
@@ -265,22 +277,14 @@ export default function RoomManager() {
           (roomId && (prev.roomId === roomId || String(prev._id) === String(roomId)));
         if (!match) return prev;
 
-        let updatedParticipants = Array.isArray(prev.participants) ? [...prev.participants] : [];
-        if (newParticipant) {
-          const alreadyHas = updatedParticipants.some(
-            (p) =>
-              (p.userId && String(p.userId) === String(newParticipant.userId)) ||
-              (p.userId?._id && String(p.userId._id) === String(newParticipant.userId)) ||
-              (p.username && p.username === newParticipant.username)
-          );
-          if (!alreadyHas) {
-            updatedParticipants.push(newParticipant);
-          }
-        }
+        const updatedParticipants = updateParticipantList(prev.participants);
+        const finalCount = typeof participantsCount === 'number'
+          ? participantsCount
+          : updatedParticipants.length;
 
         return {
           ...prev,
-          participantsCount: typeof participantsCount === 'number' ? participantsCount : updatedParticipants.length,
+          participantsCount: finalCount,
           participants: updatedParticipants
         };
       });
@@ -777,9 +781,9 @@ export default function RoomManager() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {rooms.map((room) => {
             const countdown = getCountdownDisplay(room.startTime);
-            const participantCount = Array.isArray(room.participants)
-              ? room.participants.length
-              : (typeof room.participantsCount === 'number' ? room.participantsCount : 0);
+            const participantCount = typeof room.participantsCount === 'number'
+              ? room.participantsCount
+              : (Array.isArray(room.participants) ? room.participants.length : 0);
             const maxUsers = room.maxUsers;
             const isFull = maxUsers && participantCount >= maxUsers;
             const winnerName =

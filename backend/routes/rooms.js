@@ -38,9 +38,16 @@ router.get('/', protect, async (req, res) => {
       .populate('createdBy', 'username')
       .populate('winner', 'username');
 
+    const cleanRooms = rooms.map(r => {
+      const doc = r.toObject();
+      doc.participants = doc.participants || [];
+      doc.participantsCount = doc.participants.length;
+      return doc;
+    });
+
     res.json({
       success: true,
-      rooms,
+      rooms: cleanRooms,
       pagination: {
         total,
         page: pageNum,
