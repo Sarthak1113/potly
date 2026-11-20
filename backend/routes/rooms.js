@@ -219,6 +219,16 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
       room.winner = winnerId || null;
     }
 
+    if (status === 'completed') {
+      if (!room.endedAt) room.endedAt = new Date();
+      // If completed early by admin, adjust startTime so time queries treat it as finished
+      if (room.startTime && new Date(room.startTime) > new Date()) {
+        room.startTime = new Date();
+      }
+    } else if (status === 'cancelled') {
+      if (!room.endedAt) room.endedAt = new Date();
+    }
+
     // Automatically credit prize to winner when transitioning to completed
     if (status === 'completed' && room.winner && prevStatus !== 'completed') {
       const winnerUser = await User.findById(room.winner);
@@ -237,6 +247,14 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
           balanceAfter: winnerUser.balance,
           metadata: { roomId: room.roomId }
         });
+
+        try {
+          getIO().emit('wallet:update', {
+            userId: winnerUser._id.toString(),
+            newBalance: winnerUser.balance,
+            credited: room.prize
+          });
+        } catch (e) {}
       }
     }
 

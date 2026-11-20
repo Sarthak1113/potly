@@ -160,7 +160,7 @@ export default function Lobby() {
         })
       );
 
-      if (status === 'completed' && winner) {
+      if (status === 'completed') {
         handleRoomCompleted(payload);
       }
     };
@@ -429,21 +429,15 @@ export default function Lobby() {
       .reduce((acc, curr) => acc + (Number(curr.prize) || 0), 0);
   }, [rooms]);
 
-  // Tab filtering
+  // Tab filtering - strict status matching synchronized with Admin Panel
   const filteredRooms = useMemo(() => {
     return rooms.filter((r) => {
-      if (activeTab === 'open') {
-        if (r.status === 'open') return true;
-        if (r.status === 'in_progress') return true;
-        // Keep completed room visible for 45s so users watching the draw see the winner appear without vanishing abruptly
-        if (r.status === 'completed' && r.endedAt && now - new Date(r.endedAt).getTime() < 45000) return true;
-        return false;
-      }
+      if (activeTab === 'open') return r.status === 'open';
       if (activeTab === 'in_progress') return r.status === 'in_progress';
       if (activeTab === 'completed') return r.status === 'completed';
       return true;
     });
-  }, [rooms, activeTab, now]);
+  }, [rooms, activeTab]);
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8 space-y-6 sm:space-y-8">
