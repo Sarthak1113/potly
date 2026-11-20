@@ -287,10 +287,8 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
 
     try {
       getIO().emit('room:status_changed', statusPayload);
-      getIO().emit('room:status', statusPayload);
       if (status === 'completed') {
         getIO().emit('room:completed', statusPayload);
-        getIO().emit('room:winner_drawn', statusPayload);
       } else if (status === 'cancelled') {
         getIO().emit('room:cancelled', statusPayload);
       }

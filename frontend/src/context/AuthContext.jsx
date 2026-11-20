@@ -86,6 +86,7 @@ export const AuthProvider = ({ children }) => {
           ? `🎉 Prize Credited: ₹${creditedAmount}! Your balance is now ₹${data.newBalance}!`
           : `Wallet updated! Your balance is now ₹${data.newBalance}`;
         toast.success(msg, {
+          id: `wallet-balance-${data.userId}`,
           duration: 6000,
           icon: '🎉'
         });

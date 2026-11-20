@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import confetti from 'canvas-confetti';
@@ -41,6 +41,7 @@ export default function Lobby() {
   const [winnerCelebration, setWinnerCelebration] = useState(null);
   const [rulesModalRoom, setRulesModalRoom] = useState(null);
   const [now, setNow] = useState(() => Date.now());
+  const celebratedRoomsRef = useRef(new Set());
 
   const currentUserId = user?.id || user?._id;
 
@@ -142,7 +143,7 @@ export default function Lobby() {
     // 2. Room status change listener (lockdown -> in_progress, etc.)
     const handleRoomStatus = (payload) => {
       if (!payload) return;
-      const { roomId, id, status, winner, prize, title, roomTitle, reason, notes, endedAt } = payload;
+      const { roomId, id, status, winner, prize, reason, notes, endedAt } = payload;
       setRooms((prevRooms) =>
         prevRooms.map((room) => {
           const match =
@@ -159,17 +160,14 @@ export default function Lobby() {
           };
         })
       );
-
-      if (status === 'completed') {
-        handleRoomCompleted(payload);
-      }
     };
 
-    // 3. Room completed & winner resolution listener
+    // 3. Room completed & winner resolution listener (strictly deduplicated)
     const handleRoomCompleted = (payload) => {
       if (!payload) return;
       const { roomId, id, winner, prize, roomTitle, title, endedAt } = payload;
       const effectiveTitle = roomTitle || title;
+      const roomKey = String(id || roomId || '');
 
       setRooms((prevRooms) =>
         prevRooms.map((room) => {
@@ -193,7 +191,9 @@ export default function Lobby() {
         (currentUserId && String(winnerId) === String(currentUserId)) ||
         (user?.username && (winner?.username === user.username || (typeof winner === 'string' && winner === user.username)));
 
-      if (isMe) {
+      // Trigger celebration and notification ONCE per room
+      if (isMe && roomKey && !celebratedRoomsRef.current.has(roomKey)) {
+        celebratedRoomsRef.current.add(roomKey);
         fireConfetti();
         setWinnerCelebration({
           title: effectiveTitle || 'Game Room',
@@ -201,6 +201,7 @@ export default function Lobby() {
           winner
         });
         toast.success(`🎉 JACKPOT! You won ₹${Number(prize || 0).toFixed(2)} in ${effectiveTitle || 'Room'}!`, {
+          id: `jackpot-celebration-${roomKey}`,
           duration: 6000
         });
       }
@@ -275,10 +276,8 @@ export default function Lobby() {
     };
 
     socket.on('room:user_joined', handleUserJoined);
-    socket.on('room:status', handleRoomStatus);
     socket.on('room:status_changed', handleRoomStatus);
     socket.on('room:completed', handleRoomCompleted);
-    socket.on('room:winner_drawn', handleRoomCompleted);
     socket.on('room:created', handleRoomCreated);
     socket.on('room:updated', handleRoomUpdated);
     socket.on('room:cancelled', handleRoomCancelled);
@@ -286,10 +285,8 @@ export default function Lobby() {
 
     return () => {
       socket.off('room:user_joined', handleUserJoined);
-      socket.off('room:status', handleRoomStatus);
       socket.off('room:status_changed', handleRoomStatus);
       socket.off('room:completed', handleRoomCompleted);
-      socket.off('room:winner_drawn', handleRoomCompleted);
       socket.off('room:created', handleRoomCreated);
       socket.off('room:updated', handleRoomUpdated);
       socket.off('room:cancelled', handleRoomCancelled);

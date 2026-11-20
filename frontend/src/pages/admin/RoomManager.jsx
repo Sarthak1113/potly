@@ -336,20 +336,16 @@ export default function RoomManager() {
 
     socket.on('room:created', handleRoomCreated);
     socket.on('room:user_joined', handleUserJoined);
-    socket.on('room:status', handleStatusUpdate);
     socket.on('room:status_changed', handleStatusUpdate);
     socket.on('room:completed', handleStatusUpdate);
-    socket.on('room:winner_drawn', handleStatusUpdate);
     socket.on('room:cancelled', handleStatusUpdate);
     socket.on('room:deleted', handleRoomDeleted);
 
     return () => {
       socket.off('room:created', handleRoomCreated);
       socket.off('room:user_joined', handleUserJoined);
-      socket.off('room:status', handleStatusUpdate);
       socket.off('room:status_changed', handleStatusUpdate);
       socket.off('room:completed', handleStatusUpdate);
-      socket.off('room:winner_drawn', handleStatusUpdate);
       socket.off('room:cancelled', handleStatusUpdate);
       socket.off('room:deleted', handleRoomDeleted);
     };

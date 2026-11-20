@@ -146,11 +146,9 @@ const processRoom = async (room) => {
       endedAt: freshRoom.endedAt
     };
 
-    // Broadcast via Socket.IO - emit all event name variants for full compatibility
-    safeEmit('room:winner_drawn', winnerPayload);
+    // Broadcast completion to all clients
     safeEmit('room:completed', winnerPayload);
     safeEmit('room:status_changed', winnerPayload);
-    safeEmit('room:status', winnerPayload);
 
     safeEmit('wallet:update', {
       userId: winnerUser._id.toString(),
