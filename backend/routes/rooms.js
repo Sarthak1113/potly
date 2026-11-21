@@ -256,6 +256,50 @@ router.patch('/:id/status', protect, adminOnly, async (req, res) => {
           });
         } catch (e) {}
       }
+
+      // Calculate and credit room profit / difference to admin account
+      const totalCollected = (room.participants ? room.participants.length : 0) * (Number(room.entryFee) || 0);
+      const adminProfit = totalCollected - (Number(room.prize) || 0);
+
+      if (adminProfit > 0) {
+        try {
+          let adminUser = room.createdBy ? await User.findById(room.createdBy) : null;
+          if (!adminUser) {
+            adminUser = await User.findOne({ role: 'admin' });
+          }
+          if (adminUser) {
+            const adminBalanceBefore = adminUser.balance;
+            adminUser.balance += adminProfit;
+            await adminUser.save();
+
+            await Transaction.create({
+              userId: adminUser._id,
+              amount: adminProfit,
+              type: 'credit',
+              category: 'room_commission',
+              description: `Room Profit / Commission: ${room.title} (${room.roomId}) - Total Collected: ₹${totalCollected}, Prize: ₹${room.prize}`,
+              balanceBefore: adminBalanceBefore,
+              balanceAfter: adminUser.balance,
+              metadata: {
+                roomId: room.roomId,
+                totalCollected,
+                prize: room.prize,
+                adminProfit
+              }
+            });
+
+            try {
+              getIO().emit('wallet:update', {
+                userId: adminUser._id.toString(),
+                newBalance: adminUser.balance,
+                credited: adminProfit
+              });
+            } catch (e) {}
+          }
+        } catch (adminErr) {
+          console.error(`[Rooms] Error crediting admin profit for room ${room.roomId}:`, adminErr);
+        }
+      }
     }
 
     await room.save();

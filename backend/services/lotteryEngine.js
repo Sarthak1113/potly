@@ -109,7 +109,7 @@ const processRoom = async (room) => {
     winnerUser.balance += freshRoom.prize;
     await winnerUser.save();
 
-    // Create transaction
+    // Create transaction for winner
     await Transaction.create({
       userId: winnerUser._id,
       amount: freshRoom.prize,
@@ -120,6 +120,48 @@ const processRoom = async (room) => {
       balanceAfter: winnerUser.balance,
       metadata: { roomId: freshRoom.roomId }
     });
+
+    // Calculate and credit room profit / difference to admin account
+    const totalCollected = (freshRoom.participants ? freshRoom.participants.length : 0) * (Number(freshRoom.entryFee) || 0);
+    const adminProfit = totalCollected - (Number(freshRoom.prize) || 0);
+
+    if (adminProfit > 0) {
+      try {
+        let adminUser = freshRoom.createdBy ? await User.findById(freshRoom.createdBy) : null;
+        if (!adminUser) {
+          adminUser = await User.findOne({ role: 'admin' });
+        }
+        if (adminUser) {
+          const adminBalanceBefore = adminUser.balance;
+          adminUser.balance += adminProfit;
+          await adminUser.save();
+
+          await Transaction.create({
+            userId: adminUser._id,
+            amount: adminProfit,
+            type: 'credit',
+            category: 'room_commission',
+            description: `Room Profit / Commission: ${freshRoom.title} (${freshRoom.roomId}) - Total Collected: ₹${totalCollected}, Prize: ₹${freshRoom.prize}`,
+            balanceBefore: adminBalanceBefore,
+            balanceAfter: adminUser.balance,
+            metadata: {
+              roomId: freshRoom.roomId,
+              totalCollected,
+              prize: freshRoom.prize,
+              adminProfit
+            }
+          });
+
+          safeEmit('wallet:update', {
+            userId: adminUser._id.toString(),
+            newBalance: adminUser.balance,
+            credited: adminProfit
+          });
+        }
+      } catch (adminErr) {
+        console.error(`[LotteryEngine] Error crediting admin profit for room ${freshRoom.roomId}:`, adminErr);
+      }
+    }
 
     // Update room
     freshRoom.winner = winningParticipant.userId;

@@ -23,6 +23,7 @@ const CATEGORIES = [
   { value: 'coupon_redemption', label: 'Coupon Redemption' },
   { value: 'room_entry', label: 'Room Entry' },
   { value: 'prize_won', label: 'Prize Won' },
+  { value: 'room_commission', label: 'Room Profit / Commission' },
   { value: 'admin_credit', label: 'Admin Credit' },
   { value: 'refund', label: 'Refund' }
 ];
@@ -31,6 +32,7 @@ const categoryBadgeStyles = {
   coupon_redemption: 'bg-green-500/15 text-green-400 border border-green-500/30',
   room_entry: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
   prize_won: 'bg-purple-500/15 text-purple-400 border border-purple-500/30',
+  room_commission: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
   admin_credit: 'bg-blue-500/15 text-blue-400 border border-blue-500/30',
   refund: 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
 };

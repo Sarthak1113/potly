@@ -23,7 +23,7 @@ const transactionSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['coupon_redemption', 'room_entry', 'prize_won', 'admin_credit', 'refund', 'cashout', 'cashout_hold', 'cashout_received', 'cashout_refund'],
+    enum: ['coupon_redemption', 'room_entry', 'prize_won', 'admin_credit', 'refund', 'cashout', 'cashout_hold', 'cashout_received', 'cashout_refund', 'room_commission'],
     required: true
   },
   balanceBefore: {
