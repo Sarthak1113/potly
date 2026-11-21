@@ -15,7 +15,8 @@ import {
   X,
   Users,
   Coins,
-  Bell
+  Bell,
+  QrCode
 } from 'lucide-react';
 
 export default function Navbar() {
@@ -109,6 +110,19 @@ export default function Navbar() {
               {/* Admin Links */}
               {user.role === 'admin' && (
                 <div className="flex items-center gap-2 lg:gap-3 pl-3 border-l border-[#3B3152]">
+                  <Link
+                    to="/admin/deposits"
+                    className={`flex items-center gap-1.5 text-xs lg:text-sm font-medium transition-colors px-2.5 py-1.5 rounded-control ${
+                      isActive('/admin/deposits')
+                        ? 'text-[#FFB51B] font-semibold bg-[#FFB51B]/15 border border-[#FFB51B]/40'
+                        : 'text-[#C4BBD5] hover:text-white hover:bg-[#21183A]'
+                    }`}
+                    title="Player Deposit & Payment Requests"
+                  >
+                    <QrCode size={16} />
+                    <span>Deposits</span>
+                  </Link>
+
                   <Link
                     to="/admin/cashouts"
                     className={`flex items-center gap-1.5 text-xs lg:text-sm font-medium transition-colors px-2.5 py-1.5 rounded-control ${
@@ -313,6 +327,22 @@ export default function Navbar() {
                 Admin Control
               </div>
               <div className="space-y-1">
+                <Link
+                  to="/admin/deposits"
+                  onClick={() => setMobileOpen(false)}
+                  className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                    isActive('/admin/deposits')
+                      ? 'bg-[#FFB51B]/15 text-[#FFB51B] border border-[#FFB51B]/40 font-semibold'
+                      : 'text-[#C4BBD5] hover:bg-[#21183A] hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <QrCode size={18} className="text-[#FFB51B]" />
+                    <span>📥 Deposit Requests</span>
+                  </div>
+                  {isActive('/admin/deposits') && <span className="w-2 h-2 rounded-full bg-[#FFB51B]" />}
+                </Link>
+
                 <Link
                   to="/admin/cashouts"
                   onClick={() => setMobileOpen(false)}

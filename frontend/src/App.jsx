@@ -17,6 +17,7 @@ import RoomManager from './pages/admin/RoomManager';
 import CashoutManager from './pages/admin/CashoutManager';
 import UserManager from './pages/admin/UserManager';
 import NoticeManager from './pages/admin/NoticeManager';
+import DepositManager from './pages/admin/DepositManager';
 import NoticeModal from './components/NoticeModal';
 
 export default function App() {
@@ -134,6 +135,14 @@ export default function App() {
                 element={
                   <ProtectedRoute requireAdmin>
                     <CashoutManager />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/deposits"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <DepositManager />
                   </ProtectedRoute>
                 }
               />

@@ -27,9 +27,17 @@ import {
   Smartphone,
   Building,
   AlertCircle,
-  FileText
+  FileText,
+  QrCode,
+  UploadCloud,
+  Check,
+  Copy,
+  ExternalLink,
+  Image as ImageIcon,
+  MessageSquare
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { compressImage } from '../utils/imageCompressor';
 
 const CATEGORIES = [
   { value: 'all', label: 'All Categories' },
@@ -82,6 +90,26 @@ export default function Wallet() {
   // Cashout Requests List State
   const [cashoutRequests, setCashoutRequests] = useState([]);
   const [loadingCashouts, setLoadingCashouts] = useState(false);
+
+  // Deposit & Payment Request State
+  const [paymentInfo, setPaymentInfo] = useState({ upiId: '', qrCode: '', instructions: '' });
+  const [depositRequests, setDepositRequests] = useState([]);
+  const [loadingDeposits, setLoadingDeposits] = useState(false);
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositUtr, setDepositUtr] = useState('');
+  const [depositScreenshot, setDepositScreenshot] = useState('');
+  const [screenshotMeta, setScreenshotMeta] = useState(null);
+  const [compressingScreenshot, setCompressingScreenshot] = useState(false);
+  const [submittingDeposit, setSubmittingDeposit] = useState(false);
+  const [copiedUpi, setCopiedUpi] = useState(false);
+  const [copiedCoupon, setCopiedCoupon] = useState(null);
+  const [previewLightbox, setPreviewLightbox] = useState(null);
+  const [directRedeeming, setDirectRedeeming] = useState(null);
+  const [thanksModal, setThanksModal] = useState({
+    open: false,
+    message: '',
+    amount: 0
+  });
 
   // Player Self-Cancel Cashout Modal State
   const [cancelModal, setCancelModal] = useState({
@@ -225,13 +253,40 @@ export default function Wallet() {
     }
   }, []);
 
+  const fetchPaymentInfo = useCallback(async () => {
+    try {
+      const { data } = await api.get('/deposit-requests/payment-info');
+      if (data?.paymentInfo) {
+        setPaymentInfo(data.paymentInfo);
+      }
+    } catch (err) {
+      console.error('Failed to load payment info:', err);
+    }
+  }, []);
+
+  const fetchMyDeposits = useCallback(async () => {
+    setLoadingDeposits(true);
+    try {
+      const { data } = await api.get('/deposit-requests/my');
+      if (data?.requests) {
+        setDepositRequests(data.requests);
+      }
+    } catch (err) {
+      console.error('Failed to load deposit requests:', err);
+    } finally {
+      setLoadingDeposits(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchWallet(page);
     fetchCashoutRules();
     fetchMyCashouts();
-  }, [fetchWallet, fetchCashoutRules, fetchMyCashouts, page]);
+    fetchPaymentInfo();
+    fetchMyDeposits();
+  }, [fetchWallet, fetchCashoutRules, fetchMyCashouts, fetchPaymentInfo, fetchMyDeposits, page]);
 
-  // Real-Time Socket Listener for cashout:updated
+  // Real-Time Socket Listeners for cashouts and deposits
   useEffect(() => {
     if (!user) return;
     const currentUserId = user.id || user._id;
@@ -276,12 +331,39 @@ export default function Wallet() {
       }
     };
 
+    const handleDepositResolved = (data) => {
+      if (!data) return;
+      const match =
+        data.userId &&
+        (String(data.userId) === String(currentUserId) ||
+          data.userId === user.id ||
+          data.userId === user._id);
+
+      if (match) {
+        if (data.status === 'approved') {
+          toast.success(`🎉 Deposit Approved! Your voucher code is: ${data.couponCode}`, {
+            duration: 9000,
+            icon: '🎟️'
+          });
+        } else if (data.status === 'rejected') {
+          toast.error(`❌ Deposit Declined: ${data.adminReply || 'Payment could not be verified'}`, {
+            duration: 8000,
+            icon: '❌'
+          });
+        }
+
+        fetchMyDeposits();
+      }
+    };
+
     socket.on('cashout:updated', handleCashoutUpdated);
+    socket.on('deposit_request:resolved', handleDepositResolved);
 
     return () => {
       socket.off('cashout:updated', handleCashoutUpdated);
+      socket.off('deposit_request:resolved', handleDepositResolved);
     };
-  }, [user, fetchWallet]);
+  }, [user, fetchWallet, fetchMyDeposits]);
 
   const handleRedeem = async (e) => {
     e.preventDefault();
@@ -377,6 +459,134 @@ export default function Wallet() {
     setCashoutAmount(balance.toString());
   };
 
+  const handleCopyUpi = () => {
+    if (!paymentInfo?.upiId) return;
+    navigator.clipboard.writeText(paymentInfo.upiId);
+    setCopiedUpi(true);
+    toast.success('UPI ID copied to clipboard!');
+    setTimeout(() => setCopiedUpi(false), 2500);
+  };
+
+  const handleCopyCoupon = (code) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCoupon(code);
+    toast.success(`Coupon code ${code} copied!`);
+    setTimeout(() => setCopiedCoupon(null), 2500);
+  };
+
+  const handleScreenshotSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file (PNG, JPG, WebP)');
+      return;
+    }
+
+    setCompressingScreenshot(true);
+    try {
+      const res = await compressImage(file, 720, 0.65);
+      setDepositScreenshot(res.dataUrl);
+      setScreenshotMeta({
+        name: file.name,
+        original: res.formattedOriginal,
+        compressed: res.formattedCompressed,
+        reduction: res.reductionPercent
+      });
+      toast.success(
+        `Screenshot optimized: ${res.formattedOriginal} → ${res.formattedCompressed} (${res.reductionPercent}% saved)`
+      );
+    } catch (err) {
+      toast.error(err.message || 'Failed to process screenshot');
+    } finally {
+      setCompressingScreenshot(false);
+    }
+  };
+
+  const handleDepositSubmit = async (e) => {
+    e.preventDefault();
+    const amountNum = Number(depositAmount);
+
+    if (isNaN(amountNum) || amountNum < 1) {
+      return toast.error('Please enter a valid deposit amount (at least ₹1)');
+    }
+
+    if (!depositScreenshot) {
+      return toast.error('Please attach your payment screenshot');
+    }
+
+    setSubmittingDeposit(true);
+    try {
+      const { data } = await api.post('/deposit-requests', {
+        amount: amountNum,
+        utrReference: depositUtr.trim(),
+        screenshot: depositScreenshot
+      });
+
+      // Show auto-reply thank you message instantly
+      setThanksModal({
+        open: true,
+        message:
+          data.depositRequest?.autoReplyMessage ||
+          'Thank you for your payment! Our admin will review your screenshot and issue your voucher shortly.',
+        amount: amountNum
+      });
+
+      // Reset input form
+      setDepositAmount('');
+      setDepositUtr('');
+      setDepositScreenshot('');
+      setScreenshotMeta(null);
+
+      // Add to list or refresh
+      if (data.depositRequest) {
+        setDepositRequests((prev) => [data.depositRequest, ...prev]);
+      } else {
+        fetchMyDeposits();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to submit deposit request');
+    } finally {
+      setSubmittingDeposit(false);
+    }
+  };
+
+  const handleDirectRedeem = async (code) => {
+    if (!code) return;
+    setDirectRedeeming(code);
+    try {
+      const { data } = await api.post('/wallet/redeem', { code: code.trim() });
+      toast.success(data.message || `₹${data.couponValue || ''} credited to your wallet!`, {
+        icon: '🎉',
+        duration: 6000
+      });
+      setBalance(data.newBalance);
+      if (updateBalance) {
+        updateBalance(data.newBalance);
+      }
+      fetchWallet(1);
+      fetchMyDeposits();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Redemption failed');
+    } finally {
+      setDirectRedeeming(null);
+    }
+  };
+
+  const getRemainingTime = (createdAt) => {
+    try {
+      const created = new Date(createdAt).getTime();
+      const expiresAt = created + 24 * 60 * 60 * 1000;
+      const diffMs = expiresAt - Date.now();
+      if (diffMs <= 0) return 'Expiring soon';
+      const hours = Math.floor(diffMs / (1000 * 60 * 60));
+      const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      return `${hours}h ${mins}m left`;
+    } catch {
+      return '24h validity';
+    }
+  };
+
   // Financial summary metrics
   const totalCredited = transactions
     .filter((tx) => tx.type === 'credit')
@@ -410,6 +620,27 @@ export default function Wallet() {
         >
           <WalletIcon size={16} />
           <span>Wallet &amp; Redeem</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('deposit');
+            fetchPaymentInfo();
+            fetchMyDeposits();
+          }}
+          className={`flex items-center gap-2 whitespace-nowrap shrink-0 text-xs sm:text-sm py-2 px-3 sm:px-4 font-semibold transition-all rounded-control ${
+            activeTab === 'deposit'
+              ? 'bg-[#FFB51B]/15 text-[#FFB51B] border border-[#FFB51B]/40 shadow-sm'
+              : 'text-[#C4BBD5] hover:text-white hover:bg-[#21183A] border border-transparent'
+          }`}
+        >
+          <QrCode size={16} />
+          <span>Deposit (UPI / QR)</span>
+          {depositRequests.filter((r) => r.status === 'pending').length > 0 && (
+            <span className="bg-[#FFB51B] text-black text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-1 font-mono">
+              {depositRequests.filter((r) => r.status === 'pending').length}
+            </span>
+          )}
         </button>
 
         <button
@@ -484,14 +715,27 @@ export default function Wallet() {
                 </div>
               </div>
 
-              {/* Action Buttons: Cashout (Prominent), Refresh, View Statement */}
+              {/* Action Buttons: Cashout (Prominent), Deposit UPI, Refresh, View Statement */}
               <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap sm:flex-nowrap pt-2 sm:pt-0 border-t sm:border-t-0 border-[#3B3152]">
+                <button
+                  onClick={() => {
+                    setActiveTab('deposit');
+                    fetchPaymentInfo();
+                    fetchMyDeposits();
+                  }}
+                  className="btn-gold flex items-center justify-center gap-2 text-xs sm:text-sm px-4 sm:px-5 py-2.5 flex-1 sm:flex-initial"
+                  title="Deposit money via UPI or QR scan"
+                >
+                  <QrCode size={16} />
+                  <span>Deposit UPI</span>
+                </button>
+
                 <button
                   onClick={() => {
                     fetchCashoutRules();
                     setIsCashoutModalOpen(true);
                   }}
-                  className="btn-gold flex items-center justify-center gap-2 text-xs sm:text-sm px-4 sm:px-5 py-2.5 flex-1 sm:flex-initial"
+                  className="btn-secondary flex items-center justify-center gap-2 text-xs sm:text-sm px-4 sm:px-5 py-2.5 flex-1 sm:flex-initial"
                   title="Withdraw cash balance"
                 >
                   <ArrowUpRight size={17} />
@@ -684,6 +928,480 @@ export default function Wallet() {
                         Bal: ₹{tx.balanceAfter?.toFixed(2)}
                       </p>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB: Deposit via UPI / QR */}
+      {activeTab === 'deposit' && (
+        <div className="space-y-5 sm:space-y-6">
+          {/* Header Info Banner */}
+          <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-[#21183A] via-[#17102D] to-[#2B1254] border border-[#3B3152] p-4 sm:p-6 shadow-elevated">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-pill text-[10px] font-bold bg-[#FFB51B]/15 text-[#FFB51B] border border-[#FFB51B]/35 uppercase tracking-wider mb-2 font-mono">
+                  <Sparkles size={12} /> Instant Coupon Issuance
+                </div>
+                <h2 className="text-xl sm:text-2xl font-heading font-black text-white tracking-tight">
+                  Deposit via UPI &amp; Receive Vouchers
+                </h2>
+                <p className="text-xs sm:text-sm text-[#C4BBD5] mt-1 max-w-xl">
+                  Transfer funds to the verified Potly UPI address or QR code below, upload your receipt screenshot, and receive your exclusive balance voucher directly in this portal.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    fetchPaymentInfo();
+                    fetchMyDeposits();
+                  }}
+                  className="btn-secondary flex items-center gap-2 text-xs sm:text-sm py-2 px-3.5"
+                >
+                  <RefreshCw size={15} className={loadingDeposits ? 'animate-spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Payment Details: QR Code & UPI ID Box */}
+          <div className="card grid grid-cols-1 md:grid-cols-12 gap-5 p-4 sm:p-6 items-center">
+            {/* QR Code Container */}
+            <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-[#17102D] rounded-2xl border border-[#3B3152] text-center">
+              {paymentInfo.qrCode ? (
+                <div className="relative group cursor-pointer" onClick={() => setPreviewLightbox(paymentInfo.qrCode)}>
+                  <img
+                    src={paymentInfo.qrCode}
+                    alt="Official Payment QR"
+                    className="w-44 h-44 object-contain rounded-xl bg-white p-2 shadow-lg transition-transform group-hover:scale-105"
+                  />
+                  <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-semibold gap-1.5">
+                    <Eye size={16} /> Tap to expand
+                  </div>
+                </div>
+              ) : (
+                <div className="w-44 h-44 rounded-xl bg-[#21183A] border-2 border-dashed border-[#3B3152] flex flex-col items-center justify-center text-[#C4BBD5] p-3">
+                  <QrCode size={40} className="text-[#A78BFA] mb-2" />
+                  <span className="text-xs font-medium">Scan &amp; Pay QR</span>
+                  <span className="text-[10px] text-gray-400 mt-1">Contact Admin for custom QR</span>
+                </div>
+              )}
+              <span className="text-[11px] font-semibold text-[#A78BFA] mt-2.5 flex items-center gap-1">
+                <ShieldCheck size={14} className="text-emerald-400" />
+                <span>Verified Potly Merchant</span>
+              </span>
+            </div>
+
+            {/* UPI ID & Steps */}
+            <div className="md:col-span-8 space-y-4">
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#C4BBD5]">Official UPI Address</span>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-1.5">
+                  <div className="flex-1 bg-[#17102D] border border-[#3B3152] rounded-xl px-4 py-3 flex items-center justify-between">
+                    <span className="font-mono text-sm sm:text-base font-bold text-[#FFB51B] select-all break-all">
+                      {paymentInfo.upiId || 'potly@upi'}
+                    </span>
+                    <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-pill ml-2 whitespace-nowrap">
+                      Active
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleCopyUpi}
+                    className="btn-gold flex items-center justify-center gap-1.5 text-xs py-3 px-4 sm:min-w-[120px]"
+                  >
+                    {copiedUpi ? (
+                      <>
+                        <Check size={16} className="text-black" />
+                        <span className="font-bold">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={16} />
+                        <span>Copy UPI</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Deposit Guidelines / Instructions */}
+              <div className="p-3.5 bg-[#17102D]/70 rounded-xl border border-[#3B3152] space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#FFB51B]">
+                  <AlertCircle size={14} />
+                  <span>Important Payment Instructions:</span>
+                </div>
+                <p className="text-xs text-[#C4BBD5] whitespace-pre-line leading-relaxed">
+                  {paymentInfo.instructions ||
+                    '1. Scan the QR code or transfer to the UPI ID.\n2. Ensure the UTR / Ref No. is visible in the receipt screenshot.\n3. Upload screenshot and enter exact amount below to receive your voucher.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Deposit Submission Form */}
+          <div className="card space-y-5 p-4 sm:p-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-[#6419D6]/20 text-[#A78BFA] border border-[#6419D6]/35">
+                <UploadCloud size={22} />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-white">Submit Payment Proof</h3>
+                <p className="text-xs text-[#C4BBD5]">
+                  Our client-side engine automatically compresses your screenshot to ~30KB before upload for lightning-fast submission.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleDepositSubmit} className="space-y-4 pt-1">
+              {/* Amount Input & Quick Chips */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#C4BBD5] mb-1.5">
+                  Deposit Amount (₹) <span className="text-rose-400">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-bold text-[#FFB51B] font-mono">
+                    ₹
+                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="any"
+                    required
+                    placeholder="Enter transferred amount (e.g. 500)"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    className="input-field pl-8 font-mono text-base font-bold text-white"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  <span className="text-[11px] text-gray-400">Quick amounts:</span>
+                  {[50, 100, 200, 500, 1000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setDepositAmount(amt.toString())}
+                      className="px-2.5 py-1 rounded-pill bg-[#17102D] hover:bg-[#21183A] text-xs font-mono font-semibold text-[#A78BFA] border border-[#3B3152] transition-colors"
+                    >
+                      ₹{amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* UTR Reference Input */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#C4BBD5] mb-1.5">
+                  UPI UTR / Transaction Reference ID <span className="text-[10px] text-gray-400 lowercase font-normal">(optional, speeds up verification)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={50}
+                  placeholder="e.g. 431084920194 or UPI Ref ID"
+                  value={depositUtr}
+                  onChange={(e) => setDepositUtr(e.target.value)}
+                  className="input-field text-sm font-mono"
+                />
+              </div>
+
+              {/* Screenshot Upload with Instant Client Compression */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#C4BBD5] mb-1.5">
+                  Payment Screenshot Receipt <span className="text-rose-400">*</span>
+                </label>
+
+                {!depositScreenshot ? (
+                  <label className="border-2 border-dashed border-[#3B3152] hover:border-[#6419D6]/60 bg-[#17102D] hover:bg-[#21183A] rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all group">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleScreenshotSelect}
+                      disabled={compressingScreenshot}
+                      className="hidden"
+                    />
+                    <div className="p-3 rounded-xl bg-[#6419D6]/20 text-[#A78BFA] border border-[#6419D6]/35 mb-2 group-hover:scale-105 transition-transform">
+                      {compressingScreenshot ? (
+                        <RefreshCw size={24} className="animate-spin text-[#FFB51B]" />
+                      ) : (
+                        <ImageIcon size={24} />
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold text-white group-hover:text-[#A78BFA] transition-colors">
+                      {compressingScreenshot ? 'Compressing & Optimizing...' : 'Upload Payment Screenshot'}
+                    </span>
+                    <span className="text-xs text-[#C4BBD5] mt-1 text-center">
+                      PNG, JPG, or WebP. Screenshots are automatically compressed to ~30KB to save data.
+                    </span>
+                  </label>
+                ) : (
+                  <div className="p-3 bg-[#17102D] rounded-2xl border border-[#3B3152] flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="relative cursor-pointer group shrink-0"
+                        onClick={() => setPreviewLightbox(depositScreenshot)}
+                      >
+                        <img
+                          src={depositScreenshot}
+                          alt="Screenshot Preview"
+                          className="w-16 h-16 object-cover rounded-xl border border-[#3B3152]"
+                        />
+                        <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px]">
+                          <Eye size={14} />
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-white truncate">
+                          {screenshotMeta?.name || 'payment-receipt.jpg'}
+                        </p>
+                        {screenshotMeta && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-pill bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold">
+                              ✓ {screenshotMeta.compressed} (saved {screenshotMeta.reduction}%)
+                            </span>
+                            <span className="text-[10px] text-gray-500 font-mono line-through">
+                              {screenshotMeta.original}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <label className="btn-secondary text-xs py-1.5 px-3 cursor-pointer">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleScreenshotSelect}
+                          className="hidden"
+                        />
+                        Change
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDepositScreenshot('');
+                          setScreenshotMeta(null);
+                        }}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                        title="Remove image"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Submit Button */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={submittingDeposit || compressingScreenshot}
+                  className="btn-primary w-full py-3 text-sm sm:text-base font-bold flex items-center justify-center gap-2 shadow-lg shadow-[#6419D6]/30"
+                >
+                  {submittingDeposit ? (
+                    <>
+                      <RefreshCw size={17} className="animate-spin" />
+                      <span>Submitting Request...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={17} />
+                      <span>Submit Deposit Request</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Active Deposit Requests in Last 24 Hours */}
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 px-1">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <Clock size={16} className="text-[#A78BFA]" />
+                  <span>Your Deposit Requests (Last 24 Hours)</span>
+                </h3>
+                <p className="text-[11px] text-gray-400">
+                  Requests &amp; coupons are automatically purged after exactly 24 hours per system privacy policy.
+                </p>
+              </div>
+              <span className="text-xs text-[#C4BBD5] font-mono">
+                {depositRequests.length} record{depositRequests.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            {loadingDeposits ? (
+              <div className="space-y-3">
+                {[1, 2].map((n) => (
+                  <div key={n} className="animate-pulse p-4 bg-[#17102D] rounded-2xl border border-[#3B3152]">
+                    <div className="h-4 bg-gray-700 rounded w-1/3 mb-2" />
+                    <div className="h-4 bg-gray-700 rounded w-1/4" />
+                  </div>
+                ))}
+              </div>
+            ) : depositRequests.length === 0 ? (
+              <div className="p-8 bg-[#17102D] rounded-2xl border border-[#3B3152] text-center space-y-2">
+                <QrCode size={36} className="text-gray-500 mx-auto" />
+                <p className="text-sm text-gray-400 font-medium">No active deposit requests found</p>
+                <p className="text-xs text-gray-500">
+                  Submit your first payment above to receive an exclusive balance coupon voucher.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {depositRequests.map((req) => (
+                  <div
+                    key={req._id}
+                    className={`p-4 rounded-2xl border transition-all ${
+                      req.status === 'approved'
+                        ? 'bg-gradient-to-br from-[#17102D] to-emerald-950/20 border-emerald-500/40 shadow-sm'
+                        : req.status === 'rejected'
+                        ? 'bg-[#17102D] border-rose-500/30'
+                        : 'bg-[#17102D] border-[#3B3152]'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      {/* Left: Info */}
+                      <div className="flex items-start gap-3 min-w-0">
+                        {req.screenshot && (
+                          <div
+                            onClick={() => setPreviewLightbox(req.screenshot)}
+                            className="relative cursor-pointer group shrink-0"
+                          >
+                            <img
+                              src={req.screenshot}
+                              alt="Receipt"
+                              className="w-14 h-14 object-cover rounded-xl border border-[#3B3152]"
+                            />
+                            <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px]">
+                              <Eye size={14} />
+                            </div>
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-lg font-bold font-mono text-[#FFB51B]">
+                              ₹{req.amount?.toFixed(2)}
+                            </span>
+                            <span className="text-[11px] font-mono text-gray-400">
+                              {formatDateDisplay(req.createdAt)}
+                            </span>
+                          </div>
+                          {req.utrReference && (
+                            <p className="text-xs text-[#C4BBD5] font-mono mt-0.5">
+                              UTR: <span className="text-white">{req.utrReference}</span>
+                            </p>
+                          )}
+                          <div className="flex items-center gap-1.5 text-[10px] text-amber-400 font-mono mt-1">
+                            <Clock size={12} />
+                            <span>{getRemainingTime(req.createdAt)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Status Badge */}
+                      <div className="flex items-center gap-2 self-start sm:self-center">
+                        {req.status === 'pending' && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/35">
+                            <Clock size={13} className="animate-pulse" />
+                            <span>Under Admin Review</span>
+                          </span>
+                        )}
+                        {req.status === 'approved' && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/35">
+                            <CheckCircle2 size={13} />
+                            <span>Approved</span>
+                          </span>
+                        )}
+                        {req.status === 'rejected' && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/35">
+                            <XCircle size={13} />
+                            <span>Declined</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Auto-reply thanks message */}
+                    {req.autoReplyMessage && (
+                      <div className="mt-3 p-2.5 rounded-xl bg-[#21183A]/80 border border-[#3B3152] flex items-start gap-2 text-xs text-[#C4BBD5]">
+                        <MessageSquare size={14} className="text-[#A78BFA] shrink-0 mt-0.5" />
+                        <span className="italic leading-relaxed">"{req.autoReplyMessage}"</span>
+                      </div>
+                    )}
+
+                    {/* Approved Voucher Section with 1-Click Redeem */}
+                    {req.status === 'approved' && req.couponCode && (
+                      <div className="mt-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider">
+                            Exclusive Coupon Voucher Code:
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-base font-extrabold text-white tracking-widest bg-[#17102D] px-2.5 py-1 rounded-lg border border-emerald-500/40 select-all">
+                              {req.couponCode}
+                            </span>
+                            <button
+                              onClick={() => handleCopyCoupon(req.couponCode)}
+                              className="p-1.5 rounded-lg bg-[#21183A] text-gray-300 hover:text-white hover:bg-[#3B3152] transition-colors"
+                              title="Copy Code"
+                            >
+                              {copiedCoupon === req.couponCode ? (
+                                <Check size={14} className="text-emerald-400" />
+                              ) : (
+                                <Copy size={14} />
+                              )}
+                            </button>
+                          </div>
+                          {req.expiryDate && (
+                            <p className="text-[11px] text-gray-400 font-mono">
+                              Coupon valid until: {formatDateDisplay(req.expiryDate)}
+                            </p>
+                          )}
+                          {req.adminReply && (
+                            <p className="text-xs text-emerald-300 italic mt-0.5">
+                              Admin: {req.adminReply}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Direct 1-Click Redeem Button */}
+                        <button
+                          onClick={() => handleDirectRedeem(req.couponCode)}
+                          disabled={directRedeeming === req.couponCode}
+                          className="btn-primary py-2 px-4 text-xs font-bold flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-md whitespace-nowrap"
+                        >
+                          {directRedeeming === req.couponCode ? (
+                            <>
+                              <RefreshCw size={14} className="animate-spin" />
+                              <span>Redeeming...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Gift size={14} />
+                              <span>Redeem to Wallet</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Rejection Note */}
+                    {req.status === 'rejected' && req.adminReply && (
+                      <div className="mt-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2">
+                        <AlertCircle size={15} className="text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold">Admin Reason: </span>
+                          <span>{req.adminReply}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1519,6 +2237,66 @@ export default function Wallet() {
                 <span>Confirm &amp; Return ₹{cancelModal.request.amount.toFixed(2)} to Wallet</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Thanks Automated Reply Modal */}
+      {thanksModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="card bg-[#21183A] border-[#3B3152] max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl rounded-[22px] text-center">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center text-emerald-400">
+              <CheckCircle2 size={32} />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-heading font-black text-white">Deposit Request Submitted!</h3>
+              <p className="text-xs text-[#FFB51B] font-mono mt-0.5">Amount: ₹{thanksModal.amount?.toFixed(2)}</p>
+            </div>
+
+            <div className="p-3.5 bg-[#17102D] rounded-xl border border-[#3B3152] text-xs text-[#C4BBD5] leading-relaxed text-left space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[#A78BFA]">
+                <MessageSquare size={14} />
+                <span>Message from Admin:</span>
+              </div>
+              <p className="italic">"{thanksModal.message}"</p>
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] text-gray-400 bg-[#17102D]/60 p-2.5 rounded-xl border border-[#3B3152]/60 text-left">
+              <Clock size={14} className="text-amber-400 shrink-0" />
+              <span>
+                Your request is valid for 24 hours. Once admin approves it, your exclusive coupon code will be ready to redeem with one click.
+              </span>
+            </div>
+
+            <button
+              onClick={() => setThanksModal({ open: false, message: '', amount: 0 })}
+              className="btn-gold w-full py-2.5 text-xs font-bold"
+            >
+              Got it, thanks!
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Screenshot Lightbox Modal */}
+      {previewLightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-pointer animate-fade-in"
+          onClick={() => setPreviewLightbox(null)}
+        >
+          <div className="relative max-w-3xl max-h-[90vh] flex flex-col items-center">
+            <button
+              onClick={() => setPreviewLightbox(null)}
+              className="absolute -top-10 right-0 text-white hover:text-rose-400 p-1"
+            >
+              <X size={24} />
+            </button>
+            <img
+              src={previewLightbox}
+              alt="Full Preview"
+              className="max-h-[85vh] w-auto max-w-full object-contain rounded-xl shadow-2xl border border-gray-700"
+            />
           </div>
         </div>
       )}

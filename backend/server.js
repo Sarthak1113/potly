@@ -78,6 +78,7 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/rooms', require('./routes/rooms'));
 app.use('/api/cashouts', require('./routes/cashouts'));
 app.use('/api/notice', require('./routes/notice'));
+app.use('/api/deposit-requests', require('./routes/depositRequests'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'OK', timestamp: new Date() }));
 

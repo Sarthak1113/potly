@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Banknote,
   Crown,
-  Bell
+  Bell,
+  QrCode
 } from 'lucide-react';
 
 export default function AdminDashboard() {
@@ -136,6 +137,25 @@ export default function AdminDashboard() {
 
       {/* Quick Action Navigation Links */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        {/* Deposit & Coupon Requests Card */}
+        <Link
+          to="/admin/deposits"
+          className="card group hover:border-[#FFB51B]/60 bg-[#21183A] border-[#3B3152] transition-all p-4 sm:p-5 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3 sm:gap-3.5 min-w-0 pr-2">
+            <div className="p-2.5 sm:p-3 rounded-xl bg-[#FFB51B]/15 text-[#FFB51B] border border-[#FFB51B]/35 group-hover:scale-105 transition-transform flex-shrink-0">
+              <QrCode size={22} className="sm:w-6 sm:h-6" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-semibold text-white group-hover:text-[#FFB51B] transition-colors">
+                Deposit Requests
+              </h3>
+              <p className="text-xs text-[#C4BBD5] mt-0.5 line-clamp-2">Verify UPI screenshots, issue coupons &amp; manage QR</p>
+            </div>
+          </div>
+          <ArrowRight size={18} className="text-[#C4BBD5] group-hover:text-[#FFB51B] group-hover:translate-x-1 transition-all flex-shrink-0" />
+        </Link>
+
         {/* User Management Card */}
         <Link
           to="/admin/users"
