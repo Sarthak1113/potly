@@ -32,9 +32,10 @@ import {
   UploadCloud,
   Check,
   Copy,
-  ExternalLink,
   Image as ImageIcon,
-  MessageSquare
+  MessageSquare,
+  Eye,
+  Send
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { compressImage } from '../utils/imageCompressor';
