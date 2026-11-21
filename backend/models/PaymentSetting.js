@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
 
 const paymentSettingSchema = new mongoose.Schema({
+  isEnabled: {
+    type: Boolean,
+    default: true
+  },
   upiId: {
     type: String,
     trim: true,

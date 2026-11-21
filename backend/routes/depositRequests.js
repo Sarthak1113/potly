@@ -12,7 +12,8 @@ const getOrCreateSettings = async () => {
   let settings = await PaymentSetting.findOne();
   if (!settings) {
     settings = await PaymentSetting.create({
-      upiId: 'potly@upi',
+      isEnabled: true,
+      upiId: '',
       qrCode: '',
       autoReplyTemplate: 'Thank you for your payment of ₹{amount}! We have received your screenshot and details. Admin is reviewing your transaction and your exclusive coupon code will be sent here shortly.',
       instructions: '1. Scan the QR code or copy the UPI ID.\n2. Pay the exact amount via your UPI app (GPay, PhonePe, Paytm, etc.).\n3. Take a screenshot of the payment receipt showing the UTR / Ref No.\n4. Upload the screenshot and amount below to receive your exclusive coupon.'
@@ -28,9 +29,10 @@ router.get('/payment-info', protect, async (req, res) => {
     res.json({
       success: true,
       paymentInfo: {
-        upiId: settings.upiId,
-        qrCode: settings.qrCode,
-        instructions: settings.instructions
+        isEnabled: settings.isEnabled !== false,
+        upiId: settings.upiId || '',
+        qrCode: settings.qrCode || '',
+        instructions: settings.instructions || ''
       }
     });
   } catch (error) {
@@ -42,6 +44,21 @@ router.get('/payment-info', protect, async (req, res) => {
 router.post('/', protect, async (req, res) => {
   try {
     const { amount, utrReference, screenshot } = req.body;
+
+    const settings = await getOrCreateSettings();
+    if (settings.isEnabled === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'The deposit system is currently disabled by Admin. Please check back later.'
+      });
+    }
+
+    if (!settings.upiId && !settings.qrCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Deposits cannot be processed right now because no payment method (UPI or QR) is configured by Admin.'
+      });
+    }
 
     if (!amount || isNaN(Number(amount)) || Number(amount) < 1) {
       return res.status(400).json({ success: false, message: 'Please enter a valid amount (at least ₹1)' });
@@ -71,7 +88,6 @@ router.post('/', protect, async (req, res) => {
       });
     }
 
-    const settings = await getOrCreateSettings();
     const template = settings.autoReplyTemplate || 'Thank you for your payment of ₹{amount}! Admin is reviewing your screenshot.';
     const autoReplyMessage = template
       .replace(/{amount}/g, Number(amount).toFixed(2))
@@ -303,6 +319,33 @@ router.post('/admin/:id/reject', protect, adminOnly, async (req, res) => {
   }
 });
 
+// PATCH /api/deposit-requests/admin/toggle-status - Fast one-click toggle for entire deposit system
+router.patch('/admin/toggle-status', protect, adminOnly, async (req, res) => {
+  try {
+    const settings = await getOrCreateSettings();
+    settings.isEnabled = req.body.isEnabled !== undefined ? Boolean(req.body.isEnabled) : !settings.isEnabled;
+    settings.updatedBy = req.user.id;
+    await settings.save();
+
+    try {
+      getIO().emit('deposit_system:status_changed', {
+        isEnabled: settings.isEnabled,
+        upiId: settings.upiId,
+        qrCode: settings.qrCode
+      });
+    } catch (e) {}
+
+    res.json({
+      success: true,
+      isEnabled: settings.isEnabled,
+      message: `Deposit system is now ${settings.isEnabled ? 'ACTIVE (Online)' : 'DISABLED (Offline)'}`,
+      settings
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
 // GET /api/deposit-requests/admin/settings - Get settings for payment info & auto-reply
 router.get('/admin/settings', protect, adminOnly, async (req, res) => {
   try {
@@ -316,13 +359,14 @@ router.get('/admin/settings', protect, adminOnly, async (req, res) => {
 // PUT /api/deposit-requests/admin/settings - Admin updates UPI ID, QR code, and auto-reply template
 router.put('/admin/settings', protect, adminOnly, async (req, res) => {
   try {
-    const { upiId, qrCode, autoReplyTemplate, instructions } = req.body;
+    const { isEnabled, upiId, qrCode, autoReplyTemplate, instructions } = req.body;
 
     let settings = await PaymentSetting.findOne();
     if (!settings) {
       settings = new PaymentSetting();
     }
 
+    if (isEnabled !== undefined) settings.isEnabled = Boolean(isEnabled);
     if (upiId !== undefined) settings.upiId = (upiId || '').trim();
     if (qrCode !== undefined) settings.qrCode = qrCode || '';
     if (autoReplyTemplate !== undefined && autoReplyTemplate.trim()) {
@@ -332,6 +376,14 @@ router.put('/admin/settings', protect, adminOnly, async (req, res) => {
     settings.updatedBy = req.user.id;
 
     await settings.save();
+
+    try {
+      getIO().emit('deposit_system:status_changed', {
+        isEnabled: settings.isEnabled,
+        upiId: settings.upiId,
+        qrCode: settings.qrCode
+      });
+    } catch (e) {}
 
     res.json({
       success: true,

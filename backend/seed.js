@@ -22,9 +22,9 @@ const seed = async () => {
     console.log('MongoDB connected successfully.');
 
     // 1. Seed or verify Admin user
-    let admin = await User.findOne({ email: 'admin@game.com' });
+    let admin = await User.findOne({ $or: [{ email: 'admin@gmail.com' }, { email: 'admin@game.com' }, { role: 'admin' }] });
     if (!admin) {
-      console.log('Creating initial admin user (admin@game.com)...');
+      console.log('Creating initial admin user (admin@gmail.com)...');
       
       const defaultQuestions = [
         { question: "What is your mother's maiden name?", answer: 'potly' },
@@ -40,15 +40,15 @@ const seed = async () => {
 
       admin = await User.create({
         username: 'admin',
-        email: 'admin@game.com',
+        email: 'admin@gmail.com',
         password: 'admin123', // UserSchema pre('save') hashes this with bcrypt
         role: 'admin',
         balance: 10000,
         securityQuestions: hashedQuestions
       });
-      console.log('Admin user created successfully! (Email: admin@game.com / Password: admin123)');
+      console.log('Admin user created successfully! (Email: admin@gmail.com / Password: admin123)');
     } else {
-      console.log('Admin user already exists.');
+      console.log(`Admin user already exists: @${admin.username} (${admin.email})`);
     }
 
     // 2. Seed initial CashoutRule

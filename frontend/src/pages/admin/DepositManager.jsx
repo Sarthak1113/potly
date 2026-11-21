@@ -57,6 +57,7 @@ export default function DepositManager() {
 
   // Settings Form State
   const [settings, setSettings] = useState({
+    isEnabled: true,
     upiId: '',
     qrCode: '',
     autoReplyTemplate: '',
@@ -64,6 +65,7 @@ export default function DepositManager() {
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [qrUploading, setQrUploading] = useState(false);
+  const [togglingStatus, setTogglingStatus] = useState(false);
 
   // Fetch requests
   const fetchRequests = useCallback(async () => {
@@ -88,6 +90,7 @@ export default function DepositManager() {
       const { data } = await api.get('/deposit-requests/admin/settings');
       if (data?.success && data.settings) {
         setSettings({
+          isEnabled: data.settings.isEnabled !== false,
           upiId: data.settings.upiId || '',
           qrCode: data.settings.qrCode || '',
           autoReplyTemplate: data.settings.autoReplyTemplate || '',
@@ -142,12 +145,24 @@ export default function DepositManager() {
       }
     };
 
+    const handleStatusChanged = (data) => {
+      if (!data) return;
+      setSettings((prev) => ({
+        ...prev,
+        isEnabled: data.isEnabled !== undefined ? data.isEnabled : prev.isEnabled,
+        ...(data.upiId !== undefined ? { upiId: data.upiId } : {}),
+        ...(data.qrCode !== undefined ? { qrCode: data.qrCode } : {})
+      }));
+    };
+
     socket.on('deposit_request:new', handleNewRequest);
     socket.on('deposit_request:resolved', handleResolvedRequest);
+    socket.on('deposit_system:status_changed', handleStatusChanged);
 
     return () => {
       socket.off('deposit_request:new', handleNewRequest);
       socket.off('deposit_request:resolved', handleResolvedRequest);
+      socket.off('deposit_system:status_changed', handleStatusChanged);
     };
   }, []);
 
@@ -222,6 +237,22 @@ export default function DepositManager() {
     }
   };
 
+  // Fast One-Click Master Toggle Deposit System
+  const handleToggleDepositSystem = async () => {
+    setTogglingStatus(true);
+    try {
+      const { data } = await api.patch('/deposit-requests/admin/toggle-status');
+      setSettings((prev) => ({ ...prev, isEnabled: data.isEnabled }));
+      toast.success(
+        data.message || (data.isEnabled ? 'Deposit system turned ON' : 'Deposit system turned OFF')
+      );
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to toggle deposit system status');
+    } finally {
+      setTogglingStatus(false);
+    }
+  };
+
   // Handle QR Code upload with compression
   const handleQrUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -279,6 +310,31 @@ export default function DepositManager() {
         </div>
 
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+          {/* Master On/Off Switch Button */}
+          <button
+            onClick={handleToggleDepositSystem}
+            disabled={togglingStatus}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-bold text-xs transition-all border shadow-sm ${
+              settings.isEnabled !== false
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/25'
+                : 'bg-rose-500/15 text-rose-400 border-rose-500/40 hover:bg-rose-500/25'
+            }`}
+            title={settings.isEnabled !== false ? 'Click to turn OFF deposits' : 'Click to turn ON deposits'}
+          >
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                settings.isEnabled !== false ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+              }`}
+            />
+            <span>
+              {togglingStatus
+                ? 'Updating...'
+                : settings.isEnabled !== false
+                ? '🟢 Deposit System: ON'
+                : '🔴 Deposit System: OFF'}
+            </span>
+          </button>
+
           <button
             onClick={() => setSettingsModalOpen(true)}
             className="btn-primary text-xs py-2.5 px-4 flex items-center gap-2 font-bold"
@@ -799,10 +855,45 @@ export default function DepositManager() {
               </button>
             </div>
 
+            {/* Master Deposit System Status Switch */}
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#17102D] border border-[#3B3152]">
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-white flex items-center gap-2">
+                  <span>Deposit System Status</span>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-pill font-mono font-bold ${
+                      settings.isEnabled !== false
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                    }`}
+                  >
+                    {settings.isEnabled !== false ? 'ONLINE / ENABLED' : 'OFFLINE / DISABLED'}
+                  </span>
+                </span>
+                <p className="text-[11px] text-[#C4BBD5]">
+                  Turn off to hide the deposit system completely from all player dashboards.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettings((prev) => ({ ...prev, isEnabled: prev.isEnabled === false }))}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  settings.isEnabled !== false ? 'bg-emerald-500' : 'bg-[#3B3152]'
+                }`}
+                title="Toggle deposit system on or off"
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    settings.isEnabled !== false ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
             {/* UPI ID Field */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-[#C4BBD5]">
-                Admin Receiving UPI ID: <span className="text-rose-400">*</span>
+                Admin Receiving UPI ID: <span className="text-[10px] text-gray-400 font-normal">(optional if QR Code is provided)</span>
               </label>
               <input
                 type="text"
@@ -810,9 +901,10 @@ export default function DepositManager() {
                 onChange={(e) => setSettings({ ...settings, upiId: e.target.value })}
                 placeholder="e.g. potlygames@okaxis or yourbusiness@upi"
                 className="input-field text-xs font-mono w-full"
-                required
               />
-              <p className="text-[11px] text-[#C4BBD5]">Players can copy this UPI ID on the wallet deposit screen.</p>
+              <p className="text-[11px] text-[#C4BBD5]">
+                Players can copy this UPI ID to pay. If empty and no QR code is set, deposits become invisible to players.
+              </p>
             </div>
 
             {/* QR Code Upload */}

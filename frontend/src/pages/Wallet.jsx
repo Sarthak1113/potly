@@ -93,7 +93,15 @@ export default function Wallet() {
   const [loadingCashouts, setLoadingCashouts] = useState(false);
 
   // Deposit & Payment Request State
-  const [paymentInfo, setPaymentInfo] = useState({ upiId: '', qrCode: '', instructions: '' });
+  const [paymentInfo, setPaymentInfo] = useState({
+    isEnabled: true,
+    upiId: '',
+    qrCode: '',
+    instructions: ''
+  });
+  const hasUpi = Boolean(paymentInfo.upiId && paymentInfo.upiId.trim());
+  const hasQr = Boolean(paymentInfo.qrCode && paymentInfo.qrCode.trim());
+  const isDepositAvailable = paymentInfo.isEnabled !== false && (hasUpi || hasQr);
   const [depositRequests, setDepositRequests] = useState([]);
   const [loadingDeposits, setLoadingDeposits] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
@@ -357,12 +365,28 @@ export default function Wallet() {
       }
     };
 
+    const handleDepositSystemStatus = (data) => {
+      if (!data) return;
+      setPaymentInfo((prev) => ({
+        ...prev,
+        isEnabled: data.isEnabled !== undefined ? data.isEnabled : prev.isEnabled,
+        ...(data.upiId !== undefined ? { upiId: data.upiId } : {}),
+        ...(data.qrCode !== undefined ? { qrCode: data.qrCode } : {})
+      }));
+      if (data.isEnabled === false) {
+        toast('Deposit system is temporarily offline.', { icon: 'ℹ️' });
+        setActiveTab((prev) => (prev === 'deposit' ? 'wallet' : prev));
+      }
+    };
+
     socket.on('cashout:updated', handleCashoutUpdated);
     socket.on('deposit_request:resolved', handleDepositResolved);
+    socket.on('deposit_system:status_changed', handleDepositSystemStatus);
 
     return () => {
       socket.off('cashout:updated', handleCashoutUpdated);
       socket.off('deposit_request:resolved', handleDepositResolved);
+      socket.off('deposit_system:status_changed', handleDepositSystemStatus);
     };
   }, [user, fetchWallet, fetchMyDeposits]);
 
@@ -623,26 +647,28 @@ export default function Wallet() {
           <span>Wallet &amp; Redeem</span>
         </button>
 
-        <button
-          onClick={() => {
-            setActiveTab('deposit');
-            fetchPaymentInfo();
-            fetchMyDeposits();
-          }}
-          className={`flex items-center gap-2 whitespace-nowrap shrink-0 text-xs sm:text-sm py-2 px-3 sm:px-4 font-semibold transition-all rounded-control ${
-            activeTab === 'deposit'
-              ? 'bg-[#FFB51B]/15 text-[#FFB51B] border border-[#FFB51B]/40 shadow-sm'
-              : 'text-[#C4BBD5] hover:text-white hover:bg-[#21183A] border border-transparent'
-          }`}
-        >
-          <QrCode size={16} />
-          <span>Deposit (UPI / QR)</span>
-          {depositRequests.filter((r) => r.status === 'pending').length > 0 && (
-            <span className="bg-[#FFB51B] text-black text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-1 font-mono">
-              {depositRequests.filter((r) => r.status === 'pending').length}
-            </span>
-          )}
-        </button>
+        {isDepositAvailable && (
+          <button
+            onClick={() => {
+              setActiveTab('deposit');
+              fetchPaymentInfo();
+              fetchMyDeposits();
+            }}
+            className={`flex items-center gap-2 whitespace-nowrap shrink-0 text-xs sm:text-sm py-2 px-3 sm:px-4 font-semibold transition-all rounded-control ${
+              activeTab === 'deposit'
+                ? 'bg-[#FFB51B]/15 text-[#FFB51B] border border-[#FFB51B]/40 shadow-sm'
+                : 'text-[#C4BBD5] hover:text-white hover:bg-[#21183A] border border-transparent'
+            }`}
+          >
+            <QrCode size={16} />
+            <span>Deposit (UPI / QR)</span>
+            {depositRequests.filter((r) => r.status === 'pending').length > 0 && (
+              <span className="bg-[#FFB51B] text-black text-[10px] font-bold px-1.5 py-0.2 rounded-full ml-1 font-mono">
+                {depositRequests.filter((r) => r.status === 'pending').length}
+              </span>
+            )}
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('history')}
@@ -718,18 +744,20 @@ export default function Wallet() {
 
               {/* Action Buttons: Cashout (Prominent), Deposit UPI, Refresh, View Statement */}
               <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap sm:flex-nowrap pt-2 sm:pt-0 border-t sm:border-t-0 border-[#3B3152]">
-                <button
-                  onClick={() => {
-                    setActiveTab('deposit');
-                    fetchPaymentInfo();
-                    fetchMyDeposits();
-                  }}
-                  className="btn-gold flex items-center justify-center gap-2 text-xs sm:text-sm px-4 sm:px-5 py-2.5 flex-1 sm:flex-initial"
-                  title="Deposit money via UPI or QR scan"
-                >
-                  <QrCode size={16} />
-                  <span>Deposit UPI</span>
-                </button>
+                {isDepositAvailable && (
+                  <button
+                    onClick={() => {
+                      setActiveTab('deposit');
+                      fetchPaymentInfo();
+                      fetchMyDeposits();
+                    }}
+                    className="btn-gold flex items-center justify-center gap-2 text-xs sm:text-sm px-4 sm:px-5 py-2.5 flex-1 sm:flex-initial"
+                    title="Deposit money via UPI or QR scan"
+                  >
+                    <QrCode size={16} />
+                    <span>Deposit UPI</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
@@ -939,6 +967,25 @@ export default function Wallet() {
 
       {/* TAB: Deposit via UPI / QR */}
       {activeTab === 'deposit' && (
+        !isDepositAvailable ? (
+          <div className="card p-8 sm:p-12 text-center space-y-4 max-w-lg mx-auto my-8 border border-[#3B3152]">
+            <div className="w-16 h-16 rounded-full bg-[#17102D] border border-[#FFB51B]/40 flex items-center justify-center mx-auto text-[#FFB51B] shadow-inner">
+              <AlertCircle size={32} />
+            </div>
+            <h3 className="text-lg sm:text-xl font-heading font-bold text-white">Deposit System Offline</h3>
+            <p className="text-xs sm:text-sm text-[#C4BBD5] leading-relaxed">
+              Deposits are temporarily disabled or awaiting payment method setup by Admin. Please check back later or use a voucher code in the Wallet tab.
+            </p>
+            <div className="pt-2">
+              <button
+                onClick={() => setActiveTab('wallet')}
+                className="btn-primary text-xs py-2.5 px-6 font-bold"
+              >
+                Return to Wallet
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="space-y-5 sm:space-y-6">
           {/* Header Info Banner */}
           <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-[#21183A] via-[#17102D] to-[#2B1254] border border-[#3B3152] p-4 sm:p-6 shadow-elevated">
@@ -951,7 +998,7 @@ export default function Wallet() {
                   Deposit via UPI &amp; Receive Vouchers
                 </h2>
                 <p className="text-xs sm:text-sm text-[#C4BBD5] mt-1 max-w-xl">
-                  Transfer funds to the verified Potly UPI address or QR code below, upload your receipt screenshot, and receive your exclusive balance voucher directly in this portal.
+                  Transfer funds to the verified Potly payment method below, upload your receipt screenshot, and receive your exclusive balance voucher directly in this portal.
                 </p>
               </div>
 
@@ -970,11 +1017,11 @@ export default function Wallet() {
             </div>
           </div>
 
-          {/* Payment Details: QR Code & UPI ID Box */}
-          <div className="card grid grid-cols-1 md:grid-cols-12 gap-5 p-4 sm:p-6 items-center">
-            {/* QR Code Container */}
-            <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-[#17102D] rounded-2xl border border-[#3B3152] text-center">
-              {paymentInfo.qrCode ? (
+          {/* Payment Details: Conditional QR Code & UPI ID Rendering */}
+          {hasQr && hasUpi ? (
+            <div className="card grid grid-cols-1 md:grid-cols-12 gap-5 p-4 sm:p-6 items-center">
+              {/* QR Code Container */}
+              <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-[#17102D] rounded-2xl border border-[#3B3152] text-center">
                 <div className="relative group cursor-pointer" onClick={() => setPreviewLightbox(paymentInfo.qrCode)}>
                   <img
                     src={paymentInfo.qrCode}
@@ -985,27 +1032,99 @@ export default function Wallet() {
                     <Eye size={16} /> Tap to expand
                   </div>
                 </div>
-              ) : (
-                <div className="w-44 h-44 rounded-xl bg-[#21183A] border-2 border-dashed border-[#3B3152] flex flex-col items-center justify-center text-[#C4BBD5] p-3">
-                  <QrCode size={40} className="text-[#A78BFA] mb-2" />
-                  <span className="text-xs font-medium">Scan &amp; Pay QR</span>
-                  <span className="text-[10px] text-gray-400 mt-1">Contact Admin for custom QR</span>
-                </div>
-              )}
-              <span className="text-[11px] font-semibold text-[#A78BFA] mt-2.5 flex items-center gap-1">
-                <ShieldCheck size={14} className="text-emerald-400" />
-                <span>Verified Potly Merchant</span>
-              </span>
-            </div>
+                <span className="text-[11px] font-semibold text-[#A78BFA] mt-2.5 flex items-center gap-1">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  <span>Verified Potly Merchant</span>
+                </span>
+              </div>
 
-            {/* UPI ID & Steps */}
-            <div className="md:col-span-8 space-y-4">
+              {/* UPI ID & Steps */}
+              <div className="md:col-span-8 space-y-4">
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[#C4BBD5]">Official UPI Address</span>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-1.5">
+                    <div className="flex-1 bg-[#17102D] border border-[#3B3152] rounded-xl px-4 py-3 flex items-center justify-between">
+                      <span className="font-mono text-sm sm:text-base font-bold text-[#FFB51B] select-all break-all">
+                        {paymentInfo.upiId}
+                      </span>
+                      <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-pill ml-2 whitespace-nowrap">
+                        Active
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleCopyUpi}
+                      className="btn-gold flex items-center justify-center gap-1.5 text-xs py-3 px-4 sm:min-w-[120px]"
+                    >
+                      {copiedUpi ? (
+                        <>
+                          <Check size={16} className="text-black" />
+                          <span className="font-bold">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={16} />
+                          <span>Copy UPI</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Deposit Guidelines / Instructions */}
+                <div className="p-3.5 bg-[#17102D]/70 rounded-xl border border-[#3B3152] space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#FFB51B]">
+                    <AlertCircle size={14} />
+                    <span>Important Payment Instructions:</span>
+                  </div>
+                  <p className="text-xs text-[#C4BBD5] whitespace-pre-line leading-relaxed">
+                    {paymentInfo.instructions ||
+                      '1. Scan the QR code or transfer to the UPI ID.\n2. Ensure the UTR / Ref No. is visible in the receipt screenshot.\n3. Upload screenshot and enter exact amount below to receive your voucher.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : hasQr && !hasUpi ? (
+            <div className="card grid grid-cols-1 md:grid-cols-12 gap-5 p-4 sm:p-6 items-center">
+              {/* QR Code Container Only */}
+              <div className="md:col-span-5 flex flex-col items-center justify-center p-4 bg-[#17102D] rounded-2xl border border-[#3B3152] text-center">
+                <div className="relative group cursor-pointer" onClick={() => setPreviewLightbox(paymentInfo.qrCode)}>
+                  <img
+                    src={paymentInfo.qrCode}
+                    alt="Official Payment QR"
+                    className="w-48 h-48 object-contain rounded-xl bg-white p-2 shadow-lg transition-transform group-hover:scale-105"
+                  />
+                  <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-semibold gap-1.5">
+                    <Eye size={16} /> Tap to expand
+                  </div>
+                </div>
+                <span className="text-[11px] font-semibold text-[#A78BFA] mt-2.5 flex items-center gap-1">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  <span>Verified Scan &amp; Pay QR</span>
+                </span>
+              </div>
+
+              <div className="md:col-span-7 space-y-4">
+                <div className="p-3.5 bg-[#17102D]/70 rounded-xl border border-[#3B3152] space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#FFB51B]">
+                    <AlertCircle size={14} />
+                    <span>Scan QR to Deposit:</span>
+                  </div>
+                  <p className="text-xs text-[#C4BBD5] whitespace-pre-line leading-relaxed">
+                    {paymentInfo.instructions ||
+                      '1. Scan the QR code using any UPI app (GPay, PhonePe, Paytm).\n2. Complete payment and capture a screenshot showing the UTR / Transaction ID.\n3. Upload screenshot and enter amount below to receive your voucher.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* UPI ID Only */
+            <div className="card p-4 sm:p-6 space-y-4">
               <div>
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#C4BBD5]">Official UPI Address</span>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-1.5">
                   <div className="flex-1 bg-[#17102D] border border-[#3B3152] rounded-xl px-4 py-3 flex items-center justify-between">
                     <span className="font-mono text-sm sm:text-base font-bold text-[#FFB51B] select-all break-all">
-                      {paymentInfo.upiId || 'potly@upi'}
+                      {paymentInfo.upiId}
                     </span>
                     <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-pill ml-2 whitespace-nowrap">
                       Active
@@ -1030,7 +1149,6 @@ export default function Wallet() {
                 </div>
               </div>
 
-              {/* Deposit Guidelines / Instructions */}
               <div className="p-3.5 bg-[#17102D]/70 rounded-xl border border-[#3B3152] space-y-1.5">
                 <div className="flex items-center gap-2 text-xs font-semibold text-[#FFB51B]">
                   <AlertCircle size={14} />
@@ -1038,11 +1156,11 @@ export default function Wallet() {
                 </div>
                 <p className="text-xs text-[#C4BBD5] whitespace-pre-line leading-relaxed">
                   {paymentInfo.instructions ||
-                    '1. Scan the QR code or transfer to the UPI ID.\n2. Ensure the UTR / Ref No. is visible in the receipt screenshot.\n3. Upload screenshot and enter exact amount below to receive your voucher.'}
+                    '1. Copy the UPI ID above and transfer funds from your UPI app.\n2. Ensure the UTR / Ref No. is visible in the receipt screenshot.\n3. Upload screenshot and enter exact amount below to receive your voucher.'}
                 </p>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Deposit Submission Form */}
           <div className="card space-y-5 p-4 sm:p-6">
@@ -1409,6 +1527,7 @@ export default function Wallet() {
             )}
           </div>
         </div>
+        )
       )}
 
       {/* TAB 2: Transaction History */}
